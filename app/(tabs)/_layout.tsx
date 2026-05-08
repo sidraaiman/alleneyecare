@@ -3,6 +3,25 @@ import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useCart } from '../../context/CartContext';
 import { Colors } from '../../constants/Colors';
+import { useAI } from '../../context/AIContext';
+
+function AITabIcon({ color, focused }: { color: string; focused: boolean }) {
+  const { isLoading } = useAI();
+  return (
+    <View style={styles.iconWrap}>
+      <Ionicons
+        name={focused ? 'chatbubble-ellipses' : 'chatbubble-ellipses-outline'}
+        size={24}
+        color={color}
+      />
+      {isLoading && (
+        <View style={[styles.badge, styles.pulseBadge]}>
+          <View style={styles.pulseDot} />
+        </View>
+      )}
+    </View>
+  );
+}
 
 function CartTabIcon({ color, focused }: { color: string; focused: boolean }) {
   const { totalItems } = useCart();
@@ -44,6 +63,15 @@ export default function TabLayout() {
           title: 'Shop',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? 'grid' : 'grid-outline'} size={24} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="assistant"
+        options={{
+          title: 'AI',
+          tabBarIcon: ({ color, focused }) => (
+            <AITabIcon color={color} focused={focused} />
           ),
         }}
       />
@@ -107,5 +135,23 @@ const styles = StyleSheet.create({
     color: Colors.white,
     fontSize: 10,
     fontFamily: 'DMSans_700Bold',
+  },
+  pulseBadge: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.gold,
+    alignItems: 'center',
+    justifyContent: 'center',
+    top: -4,
+    right: -6,
+    minWidth: undefined,
+    paddingHorizontal: 0,
+  },
+  pulseDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.white,
   },
 });

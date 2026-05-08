@@ -17,6 +17,7 @@ import {
 import * as SplashScreen from 'expo-splash-screen';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { CartProvider, useCart, type CartItem, type LensType } from '../context/CartContext';
+import { AIProvider } from '../context/AIContext';
 import { Colors } from '../constants/Colors';
 import { supabase } from '../lib/supabase';
 import { dbProductToApp } from '../lib/database.types';
@@ -151,9 +152,11 @@ export default function RootLayout() {
   return (
     <AuthProvider>
       <CartProvider>
-        <CartSyncManager />
-        <StatusBar style="light" />
-        <RootNavigator />
+        <AIProvider>
+          <CartSyncManager />
+          <StatusBar style="light" />
+          <RootNavigator />
+        </AIProvider>
       </CartProvider>
     </AuthProvider>
   );
