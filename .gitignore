@@ -13,3 +13,8 @@ web-build/
 *.pem
 android/
 ios/
+.env
+.env.*
+!.env.example
+.idea/
+.claude/

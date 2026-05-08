@@ -12,13 +12,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/Colors';
 import { useCart } from '../../context/CartContext';
+import { useAuth } from '../../context/AuthContext';
+import { useOrders } from '../../hooks/useOrders';
 import { products } from '../../data/products';
 
-const MOCK_ORDERS = [
-  { id: '#AEC-2041', date: 'May 3, 2026', status: 'Delivered', total: 2898, product: 'Allen Classic Round', image: products[0].image },
-  { id: '#AEC-1987', date: 'Apr 20, 2026', status: 'In Transit', total: 3799, product: 'Soleil Aviator Pro', image: products[1].image },
-  { id: '#AEC-1852', date: 'Apr 5, 2026', status: 'Delivered', total: 1899, product: 'Lumière Cat-Eye', image: products[2].image },
-];
+const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
+  delivered: { bg: '#D1FAE5', text: '#065F46' },
+  cancelled: { bg: '#FEE2E2', text: '#991B1B' },
+  default:   { bg: '#FEF3C7', text: '#92400E' },
+};
 
 const MENU_ITEMS = [
   { icon: 'cube-outline', label: 'My Orders', count: '3', route: null },
@@ -34,8 +36,13 @@ const MENU_ITEMS = [
 export default function AccountScreen() {
   const insets = useSafeAreaInsets();
   const { wishlist } = useCart();
-  const [isLoggedIn] = useState(true);
+  const { user, signOut } = useAuth();
+  const { orders } = useOrders(user?.id);
   const [activeTab, setActiveTab] = useState<'profile' | 'orders'>('profile');
+
+  const displayPhone = user?.phone ?? 'Guest';
+  const displayName = user?.user_metadata?.full_name ?? displayPhone;
+  const avatarInitial = displayName.charAt(0).toUpperCase();
 
   const wishlistProducts = products.filter(p => wishlist.includes(p.id));
 
@@ -54,7 +61,7 @@ export default function AccountScreen() {
         <View style={styles.profileBanner}>
           <View style={styles.avatarWrap}>
             <View style={styles.avatar}>
-              <Text style={styles.avatarInitial}>A</Text>
+              <Text style={styles.avatarInitial}>{avatarInitial}</Text>
             </View>
             <View style={styles.premiumBadge}>
               <Ionicons name="diamond" size={10} color={Colors.gold} />
@@ -62,11 +69,11 @@ export default function AccountScreen() {
             </View>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.userName}>Allen Customer</Text>
-            <Text style={styles.userEmail}>allen@alleneyecare.com</Text>
+            <Text style={styles.userName}>{displayName}</Text>
+            <Text style={styles.userEmail}>{displayPhone}</Text>
             <View style={styles.pointsRow}>
               <Ionicons name="star" size={14} color={Colors.gold} />
-              <Text style={styles.pointsText}>1,240 AllenPoints</Text>
+              <Text style={styles.pointsText}>AllenPoints Member</Text>
             </View>
           </View>
           <TouchableOpacity style={styles.editProfileBtn}>
@@ -77,7 +84,7 @@ export default function AccountScreen() {
         {/* Stats row */}
         <View style={styles.statsRow}>
           {[
-            { label: 'Orders', value: '3' },
+            { label: 'Orders', value: orders.length.toString() },
             { label: 'Wishlist', value: wishlist.length.toString() },
             { label: 'Prescriptions', value: '2' },
             { label: 'Points', value: '1.2K' },
@@ -97,21 +104,34 @@ export default function AccountScreen() {
               <Text style={styles.seeAll}>View All →</Text>
             </TouchableOpacity>
           </View>
-          {MOCK_ORDERS.map(order => (
-            <TouchableOpacity key={order.id} style={styles.orderCard}>
-              <Image source={{ uri: order.image }} style={styles.orderImage} />
-              <View style={styles.orderDetails}>
-                <Text style={styles.orderProduct} numberOfLines={1}>{order.product}</Text>
-                <Text style={styles.orderId}>{order.id} · {order.date}</Text>
-                <Text style={styles.orderTotal}>₹{order.total.toLocaleString()}</Text>
-              </View>
-              <View style={[styles.statusPill, { backgroundColor: order.status === 'Delivered' ? '#D1FAE5' : '#FEF3C7' }]}>
-                <Text style={[styles.statusText, { color: order.status === 'Delivered' ? '#065F46' : '#92400E' }]}>
-                  {order.status}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          ))}
+          {orders.length === 0 ? (
+            <Text style={[styles.orderId, { textAlign: 'center', paddingVertical: 12 }]}>No orders yet</Text>
+          ) : orders.slice(0, 3).map(order => {
+            const firstItem = order.order_items?.[0];
+            const statusKey = order.status as keyof typeof STATUS_COLORS;
+            const statusStyle = STATUS_COLORS[statusKey] ?? STATUS_COLORS.default;
+            const shortId = `#${order.id.slice(0, 8).toUpperCase()}`;
+            const dateStr = new Date(order.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+            return (
+              <TouchableOpacity key={order.id} style={styles.orderCard}>
+                {firstItem?.product_image ? (
+                  <Image source={{ uri: firstItem.product_image }} style={styles.orderImage} />
+                ) : (
+                  <View style={[styles.orderImage, { backgroundColor: Colors.cream }]} />
+                )}
+                <View style={styles.orderDetails}>
+                  <Text style={styles.orderProduct} numberOfLines={1}>{firstItem?.product_name ?? 'Order'}</Text>
+                  <Text style={styles.orderId}>{shortId} · {dateStr}</Text>
+                  <Text style={styles.orderTotal}>₹{order.total.toLocaleString()}</Text>
+                </View>
+                <View style={[styles.statusPill, { backgroundColor: statusStyle.bg }]}>
+                  <Text style={[styles.statusText, { color: statusStyle.text }]}>
+                    {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         {/* Wishlist Preview */}
@@ -203,7 +223,7 @@ export default function AccountScreen() {
         </View>
 
         {/* Logout */}
-        <TouchableOpacity style={styles.logoutBtn}>
+        <TouchableOpacity style={styles.logoutBtn} onPress={() => signOut().catch(console.error)}>
           <Ionicons name="log-out-outline" size={18} color={Colors.error} />
           <Text style={styles.logoutText}>Sign Out</Text>
         </TouchableOpacity>

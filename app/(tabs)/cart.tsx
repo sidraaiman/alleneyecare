@@ -8,12 +8,16 @@ import {
   Image,
   Alert,
   Modal,
+  TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/Colors';
 import { useCart } from '../../context/CartContext';
+import { useAuth } from '../../context/AuthContext';
+import { useOrders } from '../../hooks/useOrders';
 
 const LENS_LABELS: Record<string, string> = {
   'non-powered': 'Non-Powered',
@@ -35,11 +39,26 @@ const PAYMENT_METHODS = [
   { id: 'cod', icon: 'cash-outline', label: 'Cash on Delivery' },
 ];
 
+const ADDRESS_FIELDS = [
+  { label: 'Full Name', key: 'name', keyboard: 'default' as const },
+  { label: 'Phone Number', key: 'phone', keyboard: 'phone-pad' as const },
+  { label: 'Flat / House No.', key: 'flat', keyboard: 'default' as const },
+  { label: 'Street / Area', key: 'street', keyboard: 'default' as const },
+  { label: 'City', key: 'city', keyboard: 'default' as const },
+  { label: 'State', key: 'state', keyboard: 'default' as const },
+  { label: 'PIN Code', key: 'pin', keyboard: 'number-pad' as const },
+];
+
 export default function CartScreen() {
   const insets = useSafeAreaInsets();
   const { items, removeItem, updateQuantity, totalItems, totalPrice, clearCart } = useCart();
+  const { user } = useAuth();
+  const { placeOrder } = useOrders(user?.id);
   const [checkoutStep, setCheckoutStep] = useState<'cart' | 'address' | 'payment' | 'success'>('cart');
   const [paymentMethod, setPaymentMethod] = useState('upi');
+  const [address, setAddress] = useState({ name: '', phone: '', flat: '', street: '', city: '', state: '', pin: '' });
+  const [isPlacingOrder, setIsPlacingOrder] = useState(false);
+  const [placedOrderId, setPlacedOrderId] = useState<string | null>(null);
 
   const lensTotal = items.reduce((s, i) => s + (LENS_PRICES[i.lensType] || 0) * i.quantity, 0);
   const subtotal = totalPrice + lensTotal;
@@ -76,6 +95,9 @@ export default function CartScreen() {
             Your order has been confirmed.{'\n'}Estimated delivery: 3–5 business days.
           </Text>
           <View style={styles.orderCard}>
+            {placedOrderId && (
+              <Text style={styles.orderLabel}>#{placedOrderId.slice(0, 8).toUpperCase()}</Text>
+            )}
             <Text style={styles.orderLabel}>Order Total</Text>
             <Text style={styles.orderValue}>₹{grandTotal.toLocaleString()}</Text>
           </View>
@@ -214,10 +236,17 @@ export default function CartScreen() {
         {checkoutStep === 'address' && (
           <View style={styles.formSection}>
             <Text style={styles.formIntro}>Where should we deliver your order?</Text>
-            {['Full Name', 'Phone Number', 'Flat / House No.', 'Street / Area', 'City', 'State', 'PIN Code'].map(field => (
-              <View key={field} style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>{field}</Text>
-                <View style={styles.inputBox} />
+            {ADDRESS_FIELDS.map(({ label, key, keyboard }) => (
+              <View key={key} style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>{label}</Text>
+                <TextInput
+                  style={styles.inputBox}
+                  value={address[key as keyof typeof address]}
+                  onChangeText={t => setAddress(prev => ({ ...prev, [key]: t }))}
+                  placeholder={label}
+                  placeholderTextColor={Colors.textLight}
+                  keyboardType={keyboard}
+                />
               </View>
             ))}
           </View>
@@ -258,17 +287,47 @@ export default function CartScreen() {
           <Text style={styles.bottomSub}>{totalItems} item{totalItems > 1 ? 's' : ''} · {shipping === 0 ? 'Free delivery' : `₹${shipping} delivery`}</Text>
         </View>
         <TouchableOpacity
-          style={styles.checkoutBtn}
-          onPress={() => {
-            if (checkoutStep === 'cart') setCheckoutStep('address');
-            else if (checkoutStep === 'address') setCheckoutStep('payment');
-            else setCheckoutStep('success');
+          style={[styles.checkoutBtn, isPlacingOrder && { opacity: 0.7 }]}
+          disabled={isPlacingOrder}
+          onPress={async () => {
+            if (checkoutStep === 'cart') { setCheckoutStep('address'); return; }
+            if (checkoutStep === 'address') { setCheckoutStep('payment'); return; }
+            // Place order
+            setIsPlacingOrder(true);
+            try {
+              const order = await placeOrder({
+                items: items.map(item => ({
+                  product_id: item.product.id,
+                  product_name: item.product.name,
+                  product_image: item.product.image,
+                  quantity: item.quantity,
+                  lens_type: item.lensType,
+                  price: item.product.price + (LENS_PRICES[item.lensType] || 0),
+                })),
+                total: grandTotal,
+                paymentMethod,
+                address,
+              });
+              setPlacedOrderId(order.id);
+              clearCart();
+              setCheckoutStep('success');
+            } catch {
+              Alert.alert('Order Failed', 'Could not place your order. Please try again.');
+            } finally {
+              setIsPlacingOrder(false);
+            }
           }}
         >
-          <Text style={styles.checkoutBtnText}>
-            {checkoutStep === 'cart' ? 'Proceed to Address' : checkoutStep === 'address' ? 'Continue to Payment' : 'Place Order'}
-          </Text>
-          <Ionicons name="arrow-forward" size={18} color={Colors.navy} />
+          {isPlacingOrder ? (
+            <ActivityIndicator color={Colors.navy} />
+          ) : (
+            <>
+              <Text style={styles.checkoutBtnText}>
+                {checkoutStep === 'cart' ? 'Proceed to Address' : checkoutStep === 'address' ? 'Continue to Payment' : 'Place Order'}
+              </Text>
+              <Ionicons name="arrow-forward" size={18} color={Colors.navy} />
+            </>
+          )}
         </TouchableOpacity>
       </View>
     </View>
@@ -428,6 +487,10 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     borderRadius: 8,
     backgroundColor: Colors.white,
+    paddingHorizontal: 14,
+    fontFamily: 'DMSans_400Regular',
+    fontSize: 14,
+    color: Colors.textPrimary,
   },
 
   paymentOption: {

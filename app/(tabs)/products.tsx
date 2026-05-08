@@ -16,7 +16,8 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/Colors';
-import { products, Category } from '../../data/products';
+import { type Product, Category } from '../../data/products';
+import { useProducts } from '../../hooks/useProducts';
 import { useCart } from '../../context/CartContext';
 
 const { width } = Dimensions.get('window');
@@ -27,7 +28,7 @@ const GENDERS = ['All', 'Men', 'Women', 'Unisex', 'Kids'];
 const PRICE_RANGES = ['All', 'Under ₹1,000', '₹1,000–₹2,000', '₹2,000–₹3,500', 'Above ₹3,500'];
 const SORT_OPTIONS = ['Relevance', 'Price: Low to High', 'Price: High to Low', 'Newest First', 'Top Rated'];
 
-function ProductCard({ item }: { item: (typeof products)[0] }) {
+function ProductCard({ item }: { item: Product }) {
   const scale = useRef(new Animated.Value(1)).current;
   const { toggleWishlist, isInWishlist } = useCart();
   const wishlisted = isInWishlist(item.id);
@@ -95,6 +96,7 @@ function ProductCard({ item }: { item: (typeof products)[0] }) {
 
 export default function ProductsScreen() {
   const insets = useSafeAreaInsets();
+  const { products } = useProducts();
   const params = useLocalSearchParams<{ category?: string }>();
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>(params.category || 'all');

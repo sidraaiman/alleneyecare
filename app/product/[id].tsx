@@ -16,7 +16,8 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/Colors';
-import { getProductById, products } from '../../data/products';
+import { products as localProducts } from '../../data/products';
+import { useProducts } from '../../hooks/useProducts';
 import { useCart, LensType } from '../../context/CartContext';
 
 const { width } = Dimensions.get('window');
@@ -31,7 +32,8 @@ const LENS_OPTIONS: { type: LensType; label: string; desc: string; price: number
 export default function ProductDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
-  const product = getProductById(id);
+  const { products } = useProducts();
+  const product = products.find(p => p.id === id) ?? localProducts.find(p => p.id === id);
   const { addItem, toggleWishlist, isInWishlist } = useCart();
 
   const [activeImage, setActiveImage] = useState(0);

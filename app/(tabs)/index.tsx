@@ -15,13 +15,14 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/Colors';
-import { products, categories, getFeatured, getNewArrivals } from '../../data/products';
+import { categories, type Product } from '../../data/products';
+import { useProducts } from '../../hooks/useProducts';
 import { useCart } from '../../context/CartContext';
 
 const { width } = Dimensions.get('window');
 const HERO_HEIGHT = 480;
 
-function ProductCard({ item }: { item: (typeof products)[0] }) {
+function ProductCard({ item }: { item: Product }) {
   const scale = useRef(new Animated.Value(1)).current;
   const { toggleWishlist, isInWishlist } = useCart();
   const wishlisted = isInWishlist(item.id);
@@ -90,8 +91,7 @@ function ProductCard({ item }: { item: (typeof products)[0] }) {
 export default function HomeScreen() {
   const scrollY = useRef(new Animated.Value(0)).current;
   const insets = useSafeAreaInsets();
-  const featured = getFeatured();
-  const newArrivals = getNewArrivals();
+  const { featured, newArrivals } = useProducts();
 
   const headerBg = scrollY.interpolate({
     inputRange: [0, HERO_HEIGHT - 80],

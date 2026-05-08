@@ -21,7 +21,8 @@ type CartAction =
   | { type: 'REMOVE_ITEM'; payload: string }
   | { type: 'UPDATE_QUANTITY'; payload: { id: string; quantity: number } }
   | { type: 'TOGGLE_WISHLIST'; payload: string }
-  | { type: 'CLEAR_CART' };
+  | { type: 'CLEAR_CART' }
+  | { type: 'SET_CART'; payload: { items: CartItem[]; wishlist: string[] } };
 
 function cartReducer(state: CartState, action: CartAction): CartState {
   switch (action.type) {
@@ -52,6 +53,8 @@ function cartReducer(state: CartState, action: CartAction): CartState {
       };
     case 'CLEAR_CART':
       return { ...state, items: [] };
+    case 'SET_CART':
+      return action.payload;
     default:
       return state;
   }
@@ -67,6 +70,7 @@ interface CartContextValue {
   updateQuantity: (id: string, quantity: number) => void;
   toggleWishlist: (id: string) => void;
   clearCart: () => void;
+  setCart: (cart: { items: CartItem[]; wishlist: string[] }) => void;
   isInWishlist: (id: string) => boolean;
 }
 
@@ -90,6 +94,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         updateQuantity: (id, quantity) => dispatch({ type: 'UPDATE_QUANTITY', payload: { id, quantity } }),
         toggleWishlist: id => dispatch({ type: 'TOGGLE_WISHLIST', payload: id }),
         clearCart: () => dispatch({ type: 'CLEAR_CART' }),
+        setCart: cart => dispatch({ type: 'SET_CART', payload: cart }),
         isInWishlist: id => state.wishlist.includes(id),
       }}
     >
