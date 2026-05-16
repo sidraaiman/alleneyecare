@@ -113,7 +113,7 @@ export default function AccountScreen() {
             const shortId = `#${order.id.slice(0, 8).toUpperCase()}`;
             const dateStr = new Date(order.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
             return (
-              <TouchableOpacity key={order.id} style={styles.orderCard}>
+              <TouchableOpacity key={order.id} style={styles.orderCard} onPress={() => router.push(`/order/${order.id}`)}>
                 {firstItem?.product_image ? (
                   <Image source={{ uri: firstItem.product_image }} style={styles.orderImage} />
                 ) : (

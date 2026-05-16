@@ -56,6 +56,10 @@ function RootNavigator() {
           headerShadowVisible: false,
         }}
       />
+      <Stack.Screen
+        name="order/[id]"
+        options={{ headerShown: false }}
+      />
     </Stack>
   );
 }
