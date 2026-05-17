@@ -139,8 +139,8 @@ export default function AccountScreen() {
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>My Wishlist</Text>
-              <TouchableOpacity onPress={() => router.push('/products')}>
-                <Text style={styles.seeAll}>Shop Now →</Text>
+              <TouchableOpacity onPress={() => router.push('/wishlist')}>
+                <Text style={styles.seeAll}>View All →</Text>
               </TouchableOpacity>
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.wishlistScroll}>

@@ -60,6 +60,10 @@ function RootNavigator() {
         name="order/[id]"
         options={{ headerShown: false }}
       />
+      <Stack.Screen
+        name="wishlist"
+        options={{ headerShown: false }}
+      />
     </Stack>
   );
 }
