@@ -18,6 +18,7 @@ import { Colors } from '../../constants/Colors';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import { useOrders } from '../../hooks/useOrders';
+import EmptyState from '../../components/EmptyState';
 
 const LENS_LABELS: Record<string, string> = {
   'non-powered': 'Non-Powered',
@@ -71,14 +72,16 @@ export default function CartScreen() {
         <View style={styles.header}>
           <Text style={styles.headerTitle}>My Bag</Text>
         </View>
-        <View style={styles.emptyState}>
-          <Text style={{ fontSize: 72 }}>🛍️</Text>
-          <Text style={styles.emptyTitle}>Your bag is empty</Text>
-          <Text style={styles.emptyDesc}>Add frames to your bag to see them here</Text>
-          <TouchableOpacity style={styles.shopBtn} onPress={() => router.push('/products')}>
-            <Text style={styles.shopBtnText}>Explore Frames</Text>
-          </TouchableOpacity>
-        </View>
+        <EmptyState
+          icon="bag-outline"
+          title="Your bag is empty"
+          description="Browse our collection and add your favourite frames to the bag"
+          ctaLabel="Explore Frames"
+          ctaIcon="grid-outline"
+          onCta={() => router.push('/(tabs)/products')}
+          secondaryLabel="View Wishlist"
+          onSecondary={() => router.push('/wishlist')}
+        />
       </View>
     );
   }

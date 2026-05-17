@@ -15,6 +15,7 @@ import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import { useOrders } from '../../hooks/useOrders';
 import { products } from '../../data/products';
+import EmptyState from '../../components/EmptyState';
 
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   delivered: { bg: '#D1FAE5', text: '#065F46' },
@@ -105,7 +106,15 @@ export default function AccountScreen() {
             </TouchableOpacity>
           </View>
           {orders.length === 0 ? (
-            <Text style={[styles.orderId, { textAlign: 'center', paddingVertical: 12 }]}>No orders yet</Text>
+            <EmptyState
+              icon="cube-outline"
+              title="No orders yet"
+              description="Your placed orders will appear here. Start shopping to place your first order!"
+              ctaLabel="Shop Now"
+              ctaIcon="grid-outline"
+              onCta={() => router.push('/(tabs)/products')}
+              compact
+            />
           ) : orders.slice(0, 3).map(order => {
             const firstItem = order.order_items?.[0];
             const statusKey = order.status as keyof typeof STATUS_COLORS;

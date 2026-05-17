@@ -19,6 +19,7 @@ import { Colors } from '../../constants/Colors';
 import { type Product, Category } from '../../data/products';
 import { useProducts } from '../../hooks/useProducts';
 import { useCart } from '../../context/CartContext';
+import EmptyState from '../../components/EmptyState';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - 48) / 2;
@@ -217,23 +218,21 @@ export default function ProductsScreen() {
         columnWrapperStyle={styles.row}
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Text style={{ fontSize: 48 }}>🔍</Text>
-            <Text style={styles.emptyTitle}>No frames found</Text>
-            <Text style={styles.emptyDesc}>Try adjusting your filters</Text>
-            <TouchableOpacity
-              style={styles.clearBtn}
-              onPress={() => {
-                setSearch('');
-                setSelectedShape('All');
-                setSelectedGender('All');
-                setSelectedPrice('All');
-                setSelectedCategory('all');
-              }}
-            >
-              <Text style={styles.clearBtnText}>Clear Filters</Text>
-            </TouchableOpacity>
-          </View>
+          <EmptyState
+            icon="search-outline"
+            title="No frames found"
+            description="We couldn't find any frames matching your search or filters. Try clearing them."
+            ctaLabel="Clear Filters"
+            ctaIcon="refresh-outline"
+            onCta={() => {
+              setSearch('');
+              setSelectedShape('All');
+              setSelectedGender('All');
+              setSelectedPrice('All');
+              setSelectedCategory('all');
+            }}
+            compact
+          />
         }
         renderItem={({ item }) => <ProductCard item={item} />}
       />
