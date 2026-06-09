@@ -34,9 +34,26 @@ export interface Product {
   specs: ProductSpecs;
   description: string;
   tags: string[];
+  stockCount?: number;
 }
 
 const BASE = 'https://placehold.co';
+
+// Curated, human-verified eyewear photos on the Unsplash CDN (stable static files,
+// fast, always 200). Each id below was visually confirmed to be eyewear.
+const eye = (id: string, n = 700) => `https://images.unsplash.com/photo-${id}?w=${n}&h=${n}&fit=crop&q=80`;
+const EYE = {
+  glassesBrowline: '1574258495973-f010dfbb5371', // tortoise browline on book
+  glassesWood:     '1591076482161-42ce6da69f67', // browline on wood
+  glassesWorn:     '1633332755192-727a05c4013d', // round eyeglasses, worn
+  sunBlack:        '1572635196237-14b3f281503f', // black wayfarer
+  sunGold:         '1511499767150-a48a237f0083', // gold round
+  sunClear:        '1577803645773-f96470509666', // clear frame, beach
+  sunSand:         '1473496169904-658ba7c44d8a', // round on sand
+  sunCat:          '1508296695146-257a814070b4', // rose cat-eye
+  sunTortoise:     '1577744486770-020ab432da65', // tortoise by pool
+  sunWoman:        '1556015048-4d3aa10df74c',     // oversized, worn
+};
 
 export const products: Product[] = [
   {
@@ -48,12 +65,8 @@ export const products: Product[] = [
     originalPrice: 3999,
     rating: 4.8,
     reviews: 342,
-    image: `${BASE}/400x300/0D1B2A/C9A84C.png?text=Allen+Classic`,
-    images: [
-      `${BASE}/400x300/0D1B2A/C9A84C.png?text=Front+View`,
-      `${BASE}/400x300/1A2F4A/E8D5A3.png?text=Side+View`,
-      `${BASE}/400x300/162236/C9A84C.png?text=Detail+View`,
-    ],
+    image: eye(EYE.glassesBrowline),
+    images: [eye(EYE.glassesBrowline), eye(EYE.glassesWood), eye(EYE.glassesWorn)],
     frameShape: 'round',
     material: 'acetate',
     color: 'Midnight Black',
@@ -75,12 +88,8 @@ export const products: Product[] = [
     originalPrice: 5499,
     rating: 4.9,
     reviews: 521,
-    image: `${BASE}/400x300/1A1A2E/F59E0B.png?text=Soleil+Aviator`,
-    images: [
-      `${BASE}/400x300/1A1A2E/F59E0B.png?text=Front`,
-      `${BASE}/400x300/2A2A3E/F8D78A.png?text=Side`,
-      `${BASE}/400x300/0A0A1E/FFB347.png?text=Detail`,
-    ],
+    image: eye(EYE.sunSand),
+    images: [eye(EYE.sunSand), eye(EYE.sunGold), eye(EYE.sunBlack)],
     frameShape: 'aviator',
     material: 'titanium',
     color: 'Gold',
@@ -102,12 +111,8 @@ export const products: Product[] = [
     originalPrice: 2799,
     rating: 4.7,
     reviews: 218,
-    image: `${BASE}/400x300/2D1B69/E879F9.png?text=Lumiere+Cat-Eye`,
-    images: [
-      `${BASE}/400x300/2D1B69/E879F9.png?text=Front`,
-      `${BASE}/400x300/3D2B79/F0ABFC.png?text=Side`,
-      `${BASE}/400x300/1D0B59/D946EF.png?text=Detail`,
-    ],
+    image: eye(EYE.sunCat),
+    images: [eye(EYE.sunCat), eye(EYE.glassesBrowline), eye(EYE.glassesWood)],
     frameShape: 'cat-eye',
     material: 'acetate',
     color: 'Violet Blush',
@@ -128,11 +133,8 @@ export const products: Product[] = [
     originalPrice: 3299,
     rating: 4.6,
     reviews: 189,
-    image: `${BASE}/400x300/0D1B2A/FFFFFF.png?text=Executive`,
-    images: [
-      `${BASE}/400x300/0D1B2A/FFFFFF.png?text=Front`,
-      `${BASE}/400x300/1A2F4A/F3F4F6.png?text=Side`,
-    ],
+    image: eye(EYE.glassesWood),
+    images: [eye(EYE.glassesWood), eye(EYE.glassesWorn), eye(EYE.glassesBrowline)],
     frameShape: 'rectangle',
     material: 'titanium',
     color: 'Silver Chrome',
@@ -152,11 +154,8 @@ export const products: Product[] = [
     originalPrice: 1199,
     rating: 4.5,
     reviews: 876,
-    image: `${BASE}/400x300/E0F2FE/0284C7.png?text=Daily+Contacts`,
-    images: [
-      `${BASE}/400x300/E0F2FE/0284C7.png?text=30+Day+Pack`,
-      `${BASE}/400x300/BAE6FD/0369A1.png?text=Detail`,
-    ],
+    image: eye(EYE.sunGold),
+    images: [eye(EYE.sunGold), eye(EYE.glassesWorn), eye(EYE.glassesBrowline)],
     frameShape: 'round',
     material: 'silicon',
     color: 'Clear',
@@ -176,11 +175,8 @@ export const products: Product[] = [
     originalPrice: 1799,
     rating: 4.8,
     reviews: 134,
-    image: `${BASE}/400x300/FEF3C7/F59E0B.png?text=Kids+Flex`,
-    images: [
-      `${BASE}/400x300/FEF3C7/F59E0B.png?text=Front`,
-      `${BASE}/400x300/FDE68A/D97706.png?text=Side`,
-    ],
+    image: eye(EYE.glassesWorn),
+    images: [eye(EYE.glassesWorn), eye(EYE.sunCat), eye(EYE.glassesBrowline)],
     frameShape: 'oval',
     material: 'tr90',
     color: 'Sunny Yellow',
@@ -200,11 +196,8 @@ export const products: Product[] = [
     originalPrice: 4199,
     rating: 4.7,
     reviews: 445,
-    image: `${BASE}/400x300/78350F/FEF3C7.png?text=Havana+Wayfarer`,
-    images: [
-      `${BASE}/400x300/78350F/FEF3C7.png?text=Front`,
-      `${BASE}/400x300/92400E/FDE68A.png?text=Side`,
-    ],
+    image: eye(EYE.sunTortoise),
+    images: [eye(EYE.sunTortoise), eye(EYE.sunBlack), eye(EYE.sunClear)],
     frameShape: 'wayfarer',
     material: 'acetate',
     color: 'Havana Tortoise',
@@ -224,11 +217,8 @@ export const products: Product[] = [
     price: 3299,
     rating: 4.9,
     reviews: 92,
-    image: `${BASE}/400x300/F3F4F6/374151.png?text=Zen+Rimless`,
-    images: [
-      `${BASE}/400x300/F3F4F6/374151.png?text=Front`,
-      `${BASE}/400x300/E5E7EB/4B5563.png?text=Side`,
-    ],
+    image: eye(EYE.glassesWorn),
+    images: [eye(EYE.glassesWorn), eye(EYE.glassesWood), eye(EYE.glassesBrowline)],
     frameShape: 'oval',
     material: 'titanium',
     color: 'Crystal Clear',
@@ -249,11 +239,8 @@ export const products: Product[] = [
     originalPrice: 2299,
     rating: 4.4,
     reviews: 567,
-    image: `${BASE}/400x300/1E3A5F/93C5FD.png?text=Blue+Light`,
-    images: [
-      `${BASE}/400x300/1E3A5F/93C5FD.png?text=Front`,
-      `${BASE}/400x300/1E40AF/BFDBFE.png?text=Lens+Detail`,
-    ],
+    image: eye(EYE.glassesWood),
+    images: [eye(EYE.glassesWood), eye(EYE.glassesBrowline), eye(EYE.glassesWorn)],
     frameShape: 'rectangle',
     material: 'tr90',
     color: 'Navy Blue',
@@ -273,11 +260,8 @@ export const products: Product[] = [
     price: 4599,
     rating: 5.0,
     reviews: 47,
-    image: `${BASE}/400x300/0D1B2A/C9A84C.png?text=Monarch+Hex`,
-    images: [
-      `${BASE}/400x300/0D1B2A/C9A84C.png?text=Front`,
-      `${BASE}/400x300/1A2F4A/E8D5A3.png?text=Side`,
-    ],
+    image: eye(EYE.sunBlack),
+    images: [eye(EYE.sunBlack), eye(EYE.sunGold), eye(EYE.sunSand)],
     frameShape: 'round',
     material: 'titanium',
     color: 'Gold Black',
@@ -299,11 +283,8 @@ export const products: Product[] = [
     originalPrice: 2499,
     rating: 4.6,
     reviews: 203,
-    image: `${BASE}/400x300/FDF2F8/EC4899.png?text=Flora+Round`,
-    images: [
-      `${BASE}/400x300/FDF2F8/EC4899.png?text=Front`,
-      `${BASE}/400x300/FCE7F3/DB2777.png?text=Side`,
-    ],
+    image: eye(EYE.sunWoman),
+    images: [eye(EYE.sunWoman), eye(EYE.glassesBrowline), eye(EYE.sunCat)],
     frameShape: 'round',
     material: 'acetate',
     color: 'Rose Blush',
@@ -324,11 +305,8 @@ export const products: Product[] = [
     originalPrice: 3199,
     rating: 4.5,
     reviews: 312,
-    image: `${BASE}/400x300/052E16/4ADE80.png?text=Sport+Wrap`,
-    images: [
-      `${BASE}/400x300/052E16/4ADE80.png?text=Front`,
-      `${BASE}/400x300/064E3B/34D399.png?text=Side`,
-    ],
+    image: eye(EYE.sunClear),
+    images: [eye(EYE.sunClear), eye(EYE.sunSand), eye(EYE.sunTortoise)],
     frameShape: 'oval',
     material: 'tr90',
     color: 'Racing Green',

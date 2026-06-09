@@ -1,11 +1,10 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
   TouchableOpacity,
-  Image,
   TextInput,
   Modal,
   ScrollView,
@@ -20,6 +19,8 @@ import { type Product, Category } from '../../data/products';
 import { useProducts } from '../../hooks/useProducts';
 import { useCart } from '../../context/CartContext';
 import EmptyState from '../../components/EmptyState';
+import ProductImage from '@/components/ProductImage';
+import { useProductSearch, fetchSuggestions } from '../../hooks/useProductSearch';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - 48) / 2;
@@ -47,7 +48,7 @@ function ProductCard({ item }: { item: Product }) {
         onPress={() => router.push(`/product/${item.id}`)}
       >
         <View style={styles.imageWrap}>
-          <Image source={{ uri: item.image }} style={styles.productImage} />
+          <ProductImage uri={item.image} style={styles.productImage} />
           {(item.isNew || item.isBestSeller) && (
             <View style={[styles.topBadge, { backgroundColor: item.isNew ? Colors.gold : Colors.navy }]}>
               <Text style={styles.topBadgeText}>{item.isNew ? 'NEW' : 'BESTSELLER'}</Text>
@@ -98,10 +99,10 @@ function ProductCard({ item }: { item: Product }) {
 export default function ProductsScreen() {
   const insets = useSafeAreaInsets();
   const { products } = useProducts();
-  const params = useLocalSearchParams<{ category?: string }>();
+  const params = useLocalSearchParams<{ category?: string; shape?: string }>();
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>(params.category || 'all');
-  const [selectedShape, setSelectedShape] = useState('All');
+  const [selectedShape, setSelectedShape] = useState(params.shape || 'All');
   const [selectedGender, setSelectedGender] = useState('All');
   const [selectedPrice, setSelectedPrice] = useState('All');
   const [sortBy, setSortBy] = useState('Relevance');
@@ -110,37 +111,23 @@ export default function ProductsScreen() {
 
   const CATEGORIES = ['all', 'eyeglasses', 'sunglasses', 'contacts', 'kids'];
 
-  const filtered = useMemo(() => {
-    let list = [...products];
+  const { results: filtered } = useProductSearch({
+    products,
+    search,
+    category: selectedCategory,
+    shape: selectedShape,
+    gender: selectedGender,
+    price: selectedPrice,
+    sort: sortBy,
+  });
 
-    if (search) {
-      const q = search.toLowerCase();
-      list = list.filter(p => p.name.toLowerCase().includes(q) || p.brand.toLowerCase().includes(q));
-    }
-    if (selectedCategory !== 'all') {
-      list = list.filter(p => p.category === selectedCategory);
-    }
-    if (selectedShape !== 'All') {
-      list = list.filter(p => p.frameShape === selectedShape.toLowerCase().replace('-', '-'));
-    }
-    if (selectedGender !== 'All') {
-      list = list.filter(p => p.gender === selectedGender.toLowerCase());
-    }
-    if (selectedPrice !== 'All') {
-      if (selectedPrice === 'Under ₹1,000') list = list.filter(p => p.price < 1000);
-      else if (selectedPrice === '₹1,000–₹2,000') list = list.filter(p => p.price >= 1000 && p.price <= 2000);
-      else if (selectedPrice === '₹2,000–₹3,500') list = list.filter(p => p.price > 2000 && p.price <= 3500);
-      else if (selectedPrice === 'Above ₹3,500') list = list.filter(p => p.price > 3500);
-    }
-
-    switch (sortBy) {
-      case 'Price: Low to High': list.sort((a, b) => a.price - b.price); break;
-      case 'Price: High to Low': list.sort((a, b) => b.price - a.price); break;
-      case 'Top Rated': list.sort((a, b) => b.rating - a.rating); break;
-      case 'Newest First': list.sort((a, b) => (b.isNew ? 1 : 0) - (a.isNew ? 1 : 0)); break;
-    }
-    return list;
-  }, [search, selectedCategory, selectedShape, selectedGender, selectedPrice, sortBy]);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggest, setShowSuggest] = useState(false);
+  useEffect(() => {
+    let active = true;
+    fetchSuggestions(products, search).then(s => { if (active) setSuggestions(s); });
+    return () => { active = false; };
+  }, [search, products]);
 
   const activeFilters = [selectedShape, selectedGender, selectedPrice].filter(f => f !== 'All').length;
 
@@ -172,14 +159,31 @@ export default function ProductsScreen() {
           placeholder="Search frames, brands..."
           placeholderTextColor={Colors.textLight}
           value={search}
-          onChangeText={setSearch}
+          onChangeText={t => { setSearch(t); setShowSuggest(true); }}
+          onFocus={() => setShowSuggest(true)}
         />
         {search.length > 0 && (
-          <TouchableOpacity onPress={() => setSearch('')}>
+          <TouchableOpacity onPress={() => { setSearch(''); setShowSuggest(false); }}>
             <Ionicons name="close-circle" size={18} color={Colors.textLight} />
           </TouchableOpacity>
         )}
       </View>
+
+      {/* Autocomplete suggestions */}
+      {showSuggest && search.trim().length >= 2 && suggestions.length > 0 && (
+        <View style={styles.suggestBox}>
+          {suggestions.map(s => (
+            <TouchableOpacity
+              key={s}
+              style={styles.suggestItem}
+              onPress={() => { setSearch(s); setShowSuggest(false); }}
+            >
+              <Ionicons name="search-outline" size={14} color={Colors.textLight} />
+              <Text style={styles.suggestText} numberOfLines={1}>{s}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
 
       {/* Category tabs */}
       <ScrollView
@@ -376,12 +380,38 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.textPrimary,
   },
+  suggestBox: {
+    backgroundColor: Colors.white,
+    marginHorizontal: 16,
+    marginTop: 2,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
+  suggestItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderLight,
+  },
+  suggestText: {
+    flex: 1,
+    fontFamily: 'DMSans_400Regular',
+    fontSize: 14,
+    color: Colors.textPrimary,
+  },
 
-  categoryTabsScroll: { marginTop: 8 },
-  categoryTabs: { paddingHorizontal: 16, gap: 8, paddingVertical: 4 },
+  categoryTabsScroll: { marginTop: 8, flexGrow: 0 },
+  categoryTabs: { paddingHorizontal: 16, gap: 8, paddingVertical: 4, alignItems: 'center' },
   catTab: {
     paddingHorizontal: 16,
-    paddingVertical: 7,
+    height: 34,
+    justifyContent: 'center',
+    alignItems: 'center',
     borderRadius: 20,
     backgroundColor: Colors.white,
     borderWidth: 1,
@@ -391,7 +421,10 @@ const styles = StyleSheet.create({
   catTabText: {
     fontFamily: 'DMSans_500Medium',
     fontSize: 13,
+    lineHeight: 17,
     color: Colors.textSecondary,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   catTabTextActive: { color: Colors.white },
 

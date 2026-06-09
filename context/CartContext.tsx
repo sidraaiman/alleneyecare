@@ -1,7 +1,18 @@
 import React, { createContext, useContext, useReducer, ReactNode } from 'react';
 import { Product } from '../data/products';
 
-export type LensType = 'single-vision' | 'bifocal' | 'progressive' | 'non-powered';
+// A lens package key (see data/lenses.ts). Widened from a fixed union so the
+// lens wizard can offer tiered packages (blue-cut, thin, premium, …).
+export type LensType = string;
+
+/**
+ * A cart line is identified by product + lens type, so the same frame can be
+ * added with different lenses without silently merging into one line (which
+ * would bill the customer for the wrong lens).
+ */
+export function cartLineKey(productId: string, lensType: LensType): string {
+  return `${productId}::${lensType}`;
+}
 
 export interface CartItem {
   product: Product;
@@ -18,8 +29,8 @@ interface CartState {
 
 type CartAction =
   | { type: 'ADD_ITEM'; payload: CartItem }
-  | { type: 'REMOVE_ITEM'; payload: string }
-  | { type: 'UPDATE_QUANTITY'; payload: { id: string; quantity: number } }
+  | { type: 'REMOVE_ITEM'; payload: string } // payload = cart line key
+  | { type: 'UPDATE_QUANTITY'; payload: { key: string; quantity: number } }
   | { type: 'TOGGLE_WISHLIST'; payload: string }
   | { type: 'CLEAR_CART' }
   | { type: 'SET_CART'; payload: { items: CartItem[]; wishlist: string[] } };
@@ -27,7 +38,9 @@ type CartAction =
 function cartReducer(state: CartState, action: CartAction): CartState {
   switch (action.type) {
     case 'ADD_ITEM': {
-      const existing = state.items.findIndex(i => i.product.id === action.payload.product.id);
+      const existing = state.items.findIndex(
+        i => i.product.id === action.payload.product.id && i.lensType === action.payload.lensType
+      );
       if (existing >= 0) {
         const updated = [...state.items];
         updated[existing] = { ...updated[existing], quantity: updated[existing].quantity + 1 };
@@ -36,12 +49,17 @@ function cartReducer(state: CartState, action: CartAction): CartState {
       return { ...state, items: [...state.items, action.payload] };
     }
     case 'REMOVE_ITEM':
-      return { ...state, items: state.items.filter(i => i.product.id !== action.payload) };
+      return {
+        ...state,
+        items: state.items.filter(i => cartLineKey(i.product.id, i.lensType) !== action.payload),
+      };
     case 'UPDATE_QUANTITY':
       return {
         ...state,
         items: state.items.map(i =>
-          i.product.id === action.payload.id ? { ...i, quantity: action.payload.quantity } : i
+          cartLineKey(i.product.id, i.lensType) === action.payload.key
+            ? { ...i, quantity: action.payload.quantity }
+            : i
         ),
       };
     case 'TOGGLE_WISHLIST':
@@ -66,8 +84,8 @@ interface CartContextValue {
   totalItems: number;
   totalPrice: number;
   addItem: (item: CartItem) => void;
-  removeItem: (id: string) => void;
-  updateQuantity: (id: string, quantity: number) => void;
+  removeItem: (lineKey: string) => void;
+  updateQuantity: (lineKey: string, quantity: number) => void;
   toggleWishlist: (id: string) => void;
   clearCart: () => void;
   setCart: (cart: { items: CartItem[]; wishlist: string[] }) => void;
@@ -90,8 +108,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
         totalItems,
         totalPrice,
         addItem: item => dispatch({ type: 'ADD_ITEM', payload: item }),
-        removeItem: id => dispatch({ type: 'REMOVE_ITEM', payload: id }),
-        updateQuantity: (id, quantity) => dispatch({ type: 'UPDATE_QUANTITY', payload: { id, quantity } }),
+        removeItem: lineKey => dispatch({ type: 'REMOVE_ITEM', payload: lineKey }),
+        updateQuantity: (lineKey, quantity) =>
+          dispatch({ type: 'UPDATE_QUANTITY', payload: { key: lineKey, quantity } }),
         toggleWishlist: id => dispatch({ type: 'TOGGLE_WISHLIST', payload: id }),
         clearCart: () => dispatch({ type: 'CLEAR_CART' }),
         setCart: cart => dispatch({ type: 'SET_CART', payload: cart }),

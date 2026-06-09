@@ -17,6 +17,7 @@ import {
 import * as SplashScreen from 'expo-splash-screen';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { CartProvider, useCart, type CartItem, type LensType } from '../context/CartContext';
+import { ProductsProvider } from '../context/ProductsContext';
 import { AIProvider } from '../context/AIContext';
 import { Colors } from '../constants/Colors';
 import { supabase } from '../lib/supabase';
@@ -35,7 +36,7 @@ function RootNavigator() {
     if (isLoading) return;
     const inAuth = segments[0] === '(auth)';
     if (!user && !inAuth) {
-      router.replace('/(auth)/phone');
+      router.replace('/(auth)/login');
     } else if (user && inAuth) {
       router.replace('/(tabs)');
     }
@@ -72,6 +73,11 @@ function CartSyncManager() {
   const { user } = useAuth();
   const { items, wishlist, setCart, clearCart } = useCart();
   const prevUserIdRef = useRef<string | null>(null);
+  // Becomes true only after the initial hydrate completes, so we never sync
+  // (and risk wiping) the server cart before it has loaded.
+  const cartReadyRef = useRef(false);
+  // Suppresses the one sync that would otherwise echo freshly-loaded data back.
+  const skipNextSyncRef = useRef(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const syncTimerRef = useRef<any>(undefined);
 
@@ -79,17 +85,21 @@ function CartSyncManager() {
     if (IS_DEMO) return;
     if (user && user.id !== prevUserIdRef.current) {
       prevUserIdRef.current = user.id;
+      cartReadyRef.current = false;
       loadCartFromSupabase(user.id);
       registerForPushNotifications(user.id).catch(() => {});
     } else if (!user && prevUserIdRef.current) {
       prevUserIdRef.current = null;
+      cartReadyRef.current = false;
       clearCart();
     }
   }, [user?.id]);
 
-  // Debounced sync: 1.5s after last cart change (skipped in demo mode)
+  // Debounced sync: 1.5s after the last cart change. Skipped in demo mode,
+  // before the initial hydrate, and on the hydrate's own state change.
   useEffect(() => {
-    if (IS_DEMO || !user) return;
+    if (IS_DEMO || !user || !cartReadyRef.current) return;
+    if (skipNextSyncRef.current) { skipNextSyncRef.current = false; return; }
     clearTimeout(syncTimerRef.current);
     syncTimerRef.current = setTimeout(() => syncCartToSupabase(user.id), 1500);
     return () => clearTimeout(syncTimerRef.current);
@@ -112,28 +122,57 @@ function CartSyncManager() {
       }));
 
     const loadedWishlist = (wishData ?? []).map((w: any) => w.product_id as string);
+    skipNextSyncRef.current = true;
+    cartReadyRef.current = true;
     setCart({ items: loadedItems, wishlist: loadedWishlist });
   }
 
   async function syncCartToSupabase(userId: string) {
-    await supabase.from('cart_items').delete().eq('user_id', userId);
-    if (items.length > 0) {
-      await supabase.from('cart_items').insert(
-        items.map(item => ({
-          user_id: userId,
-          product_id: item.product.id,
-          quantity: item.quantity,
-          lens_type: item.lensType,
-          has_power: item.hasPower,
-          prescription: item.prescription ?? null,
-        })) as any
-      );
+    // Upsert current state FIRST so a later failure can never wipe the cart,
+    // then prune only the rows that are no longer present.
+    const cartRows = items.map(item => ({
+      user_id: userId,
+      product_id: item.product.id,
+      quantity: item.quantity,
+      lens_type: item.lensType,
+      has_power: item.hasPower,
+      prescription: item.prescription ?? null,
+    }));
+    if (cartRows.length > 0) {
+      await supabase
+        .from('cart_items')
+        .upsert(cartRows as any, { onConflict: 'user_id,product_id,lens_type' });
     }
-    await supabase.from('wishlists').delete().eq('user_id', userId);
+    const { data: existingCart } = await supabase
+      .from('cart_items')
+      .select('id, product_id, lens_type')
+      .eq('user_id', userId);
+    const keepCart = new Set(items.map(i => `${i.product.id}::${i.lensType}`));
+    const staleCartIds = (existingCart ?? [])
+      .filter((r: any) => !keepCart.has(`${r.product_id}::${r.lens_type}`))
+      .map((r: any) => r.id);
+    if (staleCartIds.length > 0) {
+      await supabase.from('cart_items').delete().in('id', staleCartIds);
+    }
+
     if (wishlist.length > 0) {
-      await supabase.from('wishlists').insert(
-        wishlist.map(productId => ({ user_id: userId, product_id: productId })) as any
-      );
+      await supabase
+        .from('wishlists')
+        .upsert(
+          wishlist.map(productId => ({ user_id: userId, product_id: productId })) as any,
+          { onConflict: 'user_id,product_id' }
+        );
+    }
+    const { data: existingWish } = await supabase
+      .from('wishlists')
+      .select('product_id')
+      .eq('user_id', userId);
+    const keepWish = new Set(wishlist);
+    const staleWishIds = (existingWish ?? [])
+      .map((r: any) => r.product_id as string)
+      .filter(pid => !keepWish.has(pid));
+    if (staleWishIds.length > 0) {
+      await supabase.from('wishlists').delete().eq('user_id', userId).in('product_id', staleWishIds);
     }
   }
 
@@ -160,11 +199,13 @@ export default function RootLayout() {
   return (
     <AuthProvider>
       <CartProvider>
-        <AIProvider>
-          <CartSyncManager />
-          <StatusBar style="light" />
-          <RootNavigator />
-        </AIProvider>
+        <ProductsProvider>
+          <AIProvider>
+            <CartSyncManager />
+            <StatusBar style="light" />
+            <RootNavigator />
+          </AIProvider>
+        </ProductsProvider>
       </CartProvider>
     </AuthProvider>
   );

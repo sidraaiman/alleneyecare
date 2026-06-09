@@ -18,6 +18,7 @@ import { Colors } from '../../constants/Colors';
 import { categories, type Product } from '../../data/products';
 import { useProducts } from '../../hooks/useProducts';
 import { useCart } from '../../context/CartContext';
+import ProductImage from '@/components/ProductImage';
 
 const { width } = Dimensions.get('window');
 const HERO_HEIGHT = 480;
@@ -41,7 +42,7 @@ function ProductCard({ item }: { item: Product }) {
         onPress={() => router.push(`/product/${item.id}`)}
       >
         <View style={styles.productImageWrap}>
-          <Image source={{ uri: item.image }} style={styles.productImage} />
+          <ProductImage uri={item.image} style={styles.productImage} />
           {item.isNew && (
             <View style={[styles.badge, { backgroundColor: Colors.gold }]}>
               <Text style={styles.badgeText}>NEW</Text>
@@ -129,7 +130,7 @@ export default function HomeScreen() {
             AllenEyeCare
           </Animated.Text>
           <View style={styles.headerActions}>
-            <TouchableOpacity style={styles.headerIcon}>
+            <TouchableOpacity style={styles.headerIcon} onPress={() => router.push('/(tabs)/products')}>
               <Ionicons name="search-outline" size={22} color={Colors.white} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.headerIcon} onPress={() => router.push('/cart')}>
@@ -267,7 +268,7 @@ export default function HomeScreen() {
         </View>
 
         {/* Promo Banner */}
-        <TouchableOpacity style={styles.promoBanner} activeOpacity={0.9}>
+        <TouchableOpacity style={styles.promoBanner} activeOpacity={0.9} onPress={() => router.push('/(tabs)/products')}>
           <View style={styles.promoBannerContent}>
             <Text style={styles.promoLabel}>LIMITED TIME</Text>
             <Text style={styles.promoHeadline}>BUY 1 GET 1{'\n'}FREE</Text>

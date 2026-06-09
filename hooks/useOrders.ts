@@ -48,6 +48,8 @@ export interface PlaceOrderParams {
   total: number;
   paymentMethod: string;
   address: Record<string, string>;
+  coupon?: string;
+  redeemPoints?: number;
 }
 
 export function useOrders(userId: string | undefined) {
@@ -73,9 +75,12 @@ export function useOrders(userId: string | undefined) {
 
     fetchOrders();
 
-    // Realtime: live order status updates
+    // Realtime: live order status updates.
+    // Unique topic per hook instance — useOrders mounts on several screens, and a
+    // shared topic makes the 2nd subscriber reuse an already-subscribed channel
+    // (".on() after subscribe()" crash).
     const channel = supabase
-      .channel(`orders-${userId}`)
+      .channel(`orders-${userId}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`)
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'orders', filter: `user_id=eq.${userId}` },
@@ -114,35 +119,41 @@ export function useOrders(userId: string | undefined) {
     }
     if (!userId) throw new Error('Not authenticated');
 
-    const { data: order, error } = await supabase
-      .from('orders')
-      .insert({
-        user_id: userId,
-        status: 'confirmed' as OrderStatus,
-        total: params.total,
-        payment_method: params.paymentMethod,
-        address: params.address,
-      } as any)
-      .select()
-      .single();
-
+    // Server-authoritative: the DB recomputes prices/total from products +
+    // lens_options, validates stock, and decrements it atomically. The client
+    // only supplies product_id / lens_type / quantity — never prices.
+    // Used for COD (and demo). Online (Razorpay) orders are created server-side
+    // by the razorpay-verify edge function after the payment signature is checked.
+    const isCod = params.paymentMethod === 'cod';
+    const rpcParams: Record<string, unknown> = {
+      p_items: params.items.map(i => ({
+        product_id: i.product_id,
+        lens_type: i.lens_type,
+        quantity: i.quantity,
+      })),
+      p_payment_method: params.paymentMethod,
+      p_address: params.address,
+      p_payment_id: null,
+      p_payment_status: isCod ? 'cod' : 'pending',
+      p_coupon: params.coupon ?? null,
+    };
+    // Only send p_redeem_points when actually redeeming. Omitting it lets the call
+    // match the pre-points place_order signature too, so checkout keeps working on
+    // databases that haven't run the loyalty-points migration yet.
+    if ((params.redeemPoints ?? 0) > 0) rpcParams.p_redeem_points = params.redeemPoints;
+    const { data: orderId, error } = await (supabase.rpc as any)('place_order', rpcParams);
     if (error) throw error;
 
-    const { error: itemsError } = await supabase.from('order_items').insert(
-      params.items.map(item => ({ ...item, order_id: (order as any).id })) as any
-    );
-    if (itemsError) throw itemsError;
-
-    // Decrement stock for each item
-    await Promise.all(
-      params.items.map(item =>
-        (supabase.rpc as any)('decrement_stock', { p_id: item.product_id, qty: item.quantity })
-      )
-    );
-
     await fetchOrders();
-    return { ...(order as any), order_items: [] } as Order;
+    return {
+      id: orderId as string,
+      status: 'confirmed',
+      total: params.total,
+      payment_method: params.paymentMethod,
+      created_at: new Date().toISOString(),
+      order_items: [],
+    };
   }, [userId, fetchOrders]);
 
-  return { orders, loading, placeOrder };
+  return { orders, loading, placeOrder, refresh: fetchOrders };
 }

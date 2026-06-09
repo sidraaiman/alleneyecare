@@ -1,8 +1,11 @@
 import type { Product } from '@/data/products';
 import type { CartItem } from '@/context/CartContext';
 
-const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
-const MODEL = 'claude-sonnet-4-6';
+// The assistant talks to a Supabase Edge Function (supabase/functions/ai-chat),
+// which holds the LLM key (Google Gemini) server-side. The key is NEVER in the app bundle.
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
+const AI_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/ai-chat`;
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -81,35 +84,31 @@ YOUR EXPERTISE:
 TONE: Warm, professional, concise. Respond in the same language the customer writes in (Hindi or English). Never invent products — only recommend from the catalog above. If asked about something outside your scope, politely redirect.`;
 }
 
-export async function sendToAnthropic(
+export async function sendToAI(
   messages: ChatMessage[],
   context: AIContextData,
-  apiKey: string
+  accessToken: string | undefined
 ): Promise<string> {
-  if (!apiKey) {
-    throw new Error('No API key configured. Add EXPO_PUBLIC_ANTHROPIC_API_KEY to your .env file.');
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    throw new Error('The assistant is unavailable: Supabase is not configured.');
+  }
+  if (!accessToken) {
+    throw new Error('Please sign in to use the assistant.');
   }
 
-  const response = await fetch(ANTHROPIC_API_URL, {
+  const response = await fetch(AI_FUNCTION_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 1024,
-      system: buildSystemPrompt(context),
-      messages,
-    }),
+    body: JSON.stringify({ system: buildSystemPrompt(context), messages }),
   });
 
+  const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error((err as any)?.error?.message ?? `HTTP ${response.status}`);
+    throw new Error((data as any)?.error ?? `Request failed (HTTP ${response.status})`);
   }
-
-  const data = await response.json();
-  return (data.content[0] as { text: string }).text;
+  return (data as { reply?: string }).reply ?? '';
 }

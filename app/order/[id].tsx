@@ -1,11 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
-  Image,
   StyleSheet,
+  Alert,
+  Linking,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,7 +14,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useAuth } from '@/context/AuthContext';
 import { useOrders } from '@/hooks/useOrders';
+import { supabase } from '@/lib/supabase';
+import { IS_DEMO } from '@/lib/config';
 import { Colors } from '@/constants/Colors';
+import ProductImage from '@/components/ProductImage';
+import { lensLabel, lensPrice } from '@/data/lenses';
 import type { OrderStatus } from '@/lib/database.types';
 
 const STEPS: { status: OrderStatus; label: string; icon: keyof typeof Ionicons.glyphMap; desc: string }[] = [
@@ -37,18 +42,12 @@ const PAYMENT_LABELS: Record<string, string> = {
   cod: 'Cash on Delivery',
 };
 
-const LENS_PRICES: Record<string, number> = {
-  'non-powered': 0,
-  'single-vision': 399,
-  bifocal: 699,
-  progressive: 999,
-};
-
 export default function OrderDetailScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
   const { orders } = useOrders(user?.id);
+  const [returnRequested, setReturnRequested] = useState(false);
 
   const order = orders.find(o => o.id === id);
 
@@ -71,9 +70,26 @@ export default function OrderDetailScreen() {
     day: 'numeric', month: 'long', year: 'numeric',
   });
 
-  const lensTotal = order.order_items.reduce((s, i) => s + (LENS_PRICES[i.lens_type ?? ''] ?? 0) * i.quantity, 0);
-  const framesTotal = order.total - lensTotal;
+  const lensTotal = order.order_items.reduce((s, i) => s + lensPrice(i.lens_type ?? '') * i.quantity, 0);
   const shipping = order.total >= 999 ? 0 : 99;
+  const framesTotal = order.total - lensTotal - shipping;
+
+  const requestReturn = () => {
+    if (IS_DEMO || !user?.id) {
+      setReturnRequested(true);
+      Alert.alert('Return requested', "We'll be in touch shortly.");
+      return;
+    }
+    supabase.from('return_requests').insert({ order_id: order.id, user_id: user.id, reason: 'Customer request' } as never)
+      .then(({ error }) => {
+        if (error) Alert.alert('Could not submit', error.message);
+        else { setReturnRequested(true); Alert.alert('Return requested', "We'll be in touch shortly."); }
+      }, () => {});
+  };
+  const contactSupport = () => {
+    Linking.openURL('https://wa.me/919999999999?text=' + encodeURIComponent(`Help with order ${shortId}`))
+      .catch(() => { Linking.openURL('tel:+919999999999').catch(() => {}); });
+  };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -171,17 +187,11 @@ export default function OrderDetailScreen() {
           <Text style={styles.cardTitle}>Items Ordered ({order.order_items.length})</Text>
           {order.order_items.map((item, i) => (
             <View key={item.id} style={[styles.itemRow, i < order.order_items.length - 1 && styles.itemRowBorder]}>
-              {item.product_image ? (
-                <Image source={{ uri: item.product_image }} style={styles.itemImage} />
-              ) : (
-                <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
-                  <Ionicons name="glasses-outline" size={24} color={Colors.textLight} />
-                </View>
-              )}
+              <ProductImage uri={item.product_image} style={styles.itemImage} />
               <View style={styles.itemInfo}>
                 <Text style={styles.itemName} numberOfLines={2}>{item.product_name}</Text>
                 {item.lens_type && item.lens_type !== 'non-powered' && (
-                  <Text style={styles.itemLens}>{item.lens_type.replace('-', ' ')} lens</Text>
+                  <Text style={styles.itemLens}>{lensLabel(item.lens_type)} lens</Text>
                 )}
                 <Text style={styles.itemQty}>Qty: {item.quantity}</Text>
               </View>
@@ -228,10 +238,19 @@ export default function OrderDetailScreen() {
             <Text style={styles.helpTitle}>Need help with this order?</Text>
             <Text style={styles.helpSub}>Our support team is available 9am – 9pm</Text>
           </View>
-          <TouchableOpacity style={styles.helpBtn}>
+          <TouchableOpacity style={styles.helpBtn} onPress={contactSupport}>
             <Text style={styles.helpBtnText}>Contact Us</Text>
           </TouchableOpacity>
         </Animated.View>
+
+        {order.status !== 'cancelled' && (
+          <TouchableOpacity style={styles.returnBtn} onPress={requestReturn} disabled={returnRequested}>
+            <Ionicons name="refresh-outline" size={16} color={returnRequested ? Colors.textLight : Colors.navy} />
+            <Text style={[styles.returnBtnText, returnRequested && { color: Colors.textLight }]}>
+              {returnRequested ? 'Return requested' : 'Request a return / exchange'}
+            </Text>
+          </TouchableOpacity>
+        )}
 
         <View style={{ height: 32 }} />
       </ScrollView>
@@ -365,4 +384,10 @@ const styles = StyleSheet.create({
   helpSub: { fontFamily: 'DMSans_400Regular', fontSize: 12, color: Colors.textSecondary },
   helpBtn: { backgroundColor: Colors.navy, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
   helpBtnText: { fontFamily: 'DMSans_700Bold', fontSize: 12, color: Colors.white },
+  returnBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: Colors.white, borderWidth: 1.5, borderColor: Colors.border,
+    borderRadius: 12, paddingVertical: 14, marginTop: 12,
+  },
+  returnBtnText: { fontFamily: 'DMSans_700Bold', fontSize: 14, color: Colors.navy },
 });

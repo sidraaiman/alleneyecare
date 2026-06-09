@@ -19,3 +19,7 @@ ios/
 .idea/
 .claude/
 alleneyecare/
+
+# Build artifacts / local CLI state (not source)
+*.apk
+supabase/.temp/

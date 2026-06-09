@@ -23,6 +23,9 @@ interface AuthContextValue {
   isLoading: boolean;
   signInWithPhone: (phone: string) => Promise<void>;
   verifyOTP: (phone: string, token: string) => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  signUpWithEmail: (email: string, password: string) => Promise<void>;
+  updateProfile: (updates: { full_name?: string; phone?: string }) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -62,6 +65,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error;
   };
 
+  const signInWithEmail = async (email: string, password: string) => {
+    if (IS_DEMO) { setUser(DEMO_USER); return; }
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+  };
+
+  const signUpWithEmail = async (email: string, password: string) => {
+    if (IS_DEMO) { setUser(DEMO_USER); return; }
+    const { error } = await supabase.auth.signUp({ email, password });
+    if (error) throw error;
+  };
+
+  const updateProfile = async (updates: { full_name?: string; phone?: string }) => {
+    if (IS_DEMO) {
+      setUser(u => (u ? ({ ...u, user_metadata: { ...u.user_metadata, ...updates } } as User) : u));
+      return;
+    }
+    const { data, error } = await supabase.auth.updateUser({ data: updates });
+    if (error) throw error;
+    if (data.user) setUser(data.user);
+    // Best-effort mirror into the profiles row (ignore failures).
+    if (data.user?.id && updates.full_name !== undefined) {
+      (supabase.from('profiles') as any).update({ full_name: updates.full_name }).eq('id', data.user.id).then(() => {}, () => {});
+    }
+  };
+
   const signOut = async () => {
     if (IS_DEMO) { setUser(null); return; }
     const { error } = await supabase.auth.signOut();
@@ -69,7 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, isLoading, signInWithPhone, verifyOTP, signOut }}>
+    <AuthContext.Provider value={{ user, session, isLoading, signInWithPhone, verifyOTP, signInWithEmail, signUpWithEmail, updateProfile, signOut }}>
       {children}
     </AuthContext.Provider>
   );
