@@ -1,38 +1,31 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Image,
   Alert,
   Modal,
   TextInput,
   ActivityIndicator,
+  Switch,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import RazorpayCheckout from 'react-native-razorpay';
 import { Colors } from '../../constants/Colors';
-import { useCart } from '../../context/CartContext';
+import { useCart, cartLineKey } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import { useOrders } from '../../hooks/useOrders';
+import { createPaymentOrder, verifyPayment } from '../../services/payments';
+import { IS_DEMO } from '../../lib/config';
+import { supabase } from '../../lib/supabase';
+import { lensLabel, lensPrice } from '../../data/lenses';
 import EmptyState from '../../components/EmptyState';
-
-const LENS_LABELS: Record<string, string> = {
-  'non-powered': 'Non-Powered',
-  'single-vision': 'Single Vision',
-  bifocal: 'Bifocal',
-  progressive: 'Progressive',
-};
-
-const LENS_PRICES: Record<string, number> = {
-  'non-powered': 0,
-  'single-vision': 399,
-  bifocal: 699,
-  progressive: 999,
-};
+import ProductImage from '@/components/ProductImage';
+import { Address, loadAddresses, addAddress, isComplete as addressComplete } from '../../lib/addresses';
 
 const PAYMENT_METHODS = [
   { id: 'upi', icon: 'phone-portrait-outline', label: 'UPI / GPay / PhonePe' },
@@ -53,18 +46,82 @@ const ADDRESS_FIELDS = [
 export default function CartScreen() {
   const insets = useSafeAreaInsets();
   const { items, removeItem, updateQuantity, totalItems, totalPrice, clearCart } = useCart();
-  const { user } = useAuth();
-  const { placeOrder } = useOrders(user?.id);
+  const { user, session } = useAuth();
+  const { placeOrder, refresh } = useOrders(user?.id);
   const [checkoutStep, setCheckoutStep] = useState<'cart' | 'address' | 'payment' | 'success'>('cart');
-  const [paymentMethod, setPaymentMethod] = useState('upi');
+  const [paymentMethod, setPaymentMethod] = useState('cod');
   const [address, setAddress] = useState({ name: '', phone: '', flat: '', street: '', city: '', state: '', pin: '' });
+  const [savedAddresses, setSavedAddresses] = useState<Address[]>([]);
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const [placedOrderId, setPlacedOrderId] = useState<string | null>(null);
+  const [placedTotal, setPlacedTotal] = useState(0);
 
-  const lensTotal = items.reduce((s, i) => s + (LENS_PRICES[i.lensType] || 0) * i.quantity, 0);
+  const [coupon, setCoupon] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; discount: number } | null>(null);
+  const [couponError, setCouponError] = useState('');
+  const [isMember, setIsMember] = useState(false);
+  const [pointsBalance, setPointsBalance] = useState(0);
+  const [usePoints, setUsePoints] = useState(false);
+
+  const lensTotal = items.reduce((s, i) => s + lensPrice(i.lensType) * i.quantity, 0);
   const subtotal = totalPrice + lensTotal;
-  const shipping = subtotal >= 999 ? 0 : 99;
-  const grandTotal = subtotal + shipping;
+  const memberDiscount = isMember ? Math.floor(subtotal * 0.05) : 0;
+  const couponDiscount = appliedCoupon?.discount ?? 0;
+  // Points: 1 point = ₹1, capped at the balance and the post-member/coupon goods value.
+  const maxRedeem = Math.min(pointsBalance, Math.max(0, subtotal - memberDiscount - couponDiscount));
+  const pointsDiscount = usePoints ? maxRedeem : 0;
+  const discount = memberDiscount + couponDiscount + pointsDiscount;
+  const shipping = isMember || subtotal - discount >= 999 ? 0 : 99;
+  const grandTotal = Math.max(0, subtotal - discount) + shipping;
+  const earnEstimate = Math.floor(grandTotal / 100) * (isMember ? 2 : 1);
+
+  // Load saved addresses; prefill the form from the default when it's still blank.
+  useEffect(() => {
+    let active = true;
+    loadAddresses(user?.id).then(list => {
+      if (!active) return;
+      setSavedAddresses(list);
+      const def = list.find(a => a.isDefault) ?? list[0];
+      if (def) {
+        setAddress(prev =>
+          prev.name || prev.phone || prev.flat
+            ? prev
+            : { name: def.name, phone: def.phone, flat: def.flat, street: def.street, city: def.city, state: def.state, pin: def.pin }
+        );
+      }
+    });
+    return () => { active = false; };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (IS_DEMO || !user?.id) { setIsMember(false); setPointsBalance(0); return; }
+    let active = true;
+    supabase.from('memberships').select('active, expires_at').eq('user_id', user.id).limit(1)
+      .then(({ data }) => {
+        if (!active) return;
+        const m = (data?.[0] ?? null) as { active: boolean; expires_at: string | null } | null;
+        setIsMember(!!m && m.active && (!m.expires_at || new Date(m.expires_at) > new Date()));
+      }, () => {});
+    supabase.from('profiles').select('points').eq('id', user.id).single()
+      .then(({ data }) => { if (active && data) setPointsBalance((data as { points: number }).points ?? 0); }, () => {});
+    return () => { active = false; };
+  }, [user?.id]);
+
+  async function applyCoupon() {
+    const code = coupon.trim().toUpperCase();
+    setCouponError('');
+    if (!code) return;
+    const base = subtotal - memberDiscount;
+    if (IS_DEMO) {
+      if (code === 'WELCOME10' && base >= 999) setAppliedCoupon({ code, discount: Math.floor(base * 0.1) });
+      else if (code === 'FLAT200' && base >= 1999) setAppliedCoupon({ code, discount: 200 });
+      else { setAppliedCoupon(null); setCouponError('Invalid code or minimum not met'); }
+      return;
+    }
+    const { data } = await (supabase.rpc as any)('validate_coupon', { p_code: code, p_subtotal: base });
+    if (data?.valid) setAppliedCoupon({ code, discount: data.discount });
+    else { setAppliedCoupon(null); setCouponError(data?.message ?? 'Invalid code'); }
+  }
 
   if (items.length === 0 && checkoutStep !== 'success') {
     return (
@@ -102,7 +159,7 @@ export default function CartScreen() {
               <Text style={styles.orderLabel}>#{placedOrderId.slice(0, 8).toUpperCase()}</Text>
             )}
             <Text style={styles.orderLabel}>Order Total</Text>
-            <Text style={styles.orderValue}>₹{grandTotal.toLocaleString()}</Text>
+            <Text style={styles.orderValue}>₹{placedTotal.toLocaleString()}</Text>
           </View>
           <TouchableOpacity
             style={styles.continueBtn}
@@ -148,12 +205,12 @@ export default function CartScreen() {
           <View>
             {/* Cart Items */}
             {items.map(item => (
-              <View key={item.product.id} style={styles.cartItem}>
-                <Image source={{ uri: item.product.image }} style={styles.cartImage} />
+              <View key={cartLineKey(item.product.id, item.lensType)} style={styles.cartItem}>
+                <ProductImage uri={item.product.image} style={styles.cartImage} />
                 <View style={styles.cartDetails}>
                   <Text style={styles.cartBrand}>{item.product.brand}</Text>
                   <Text style={styles.cartName} numberOfLines={1}>{item.product.name}</Text>
-                  <Text style={styles.cartLens}>{LENS_LABELS[item.lensType]}</Text>
+                  <Text style={styles.cartLens}>{lensLabel(item.lensType)}</Text>
                   {item.hasPower && (
                     <View style={styles.prescriptionPill}>
                       <Ionicons name="document-text-outline" size={10} color={Colors.gold} />
@@ -162,23 +219,25 @@ export default function CartScreen() {
                   )}
                   <View style={styles.cartPriceRow}>
                     <Text style={styles.cartPrice}>₹{item.product.price.toLocaleString()}</Text>
-                    {LENS_PRICES[item.lensType] > 0 && (
-                      <Text style={styles.cartLensPrice}>+₹{LENS_PRICES[item.lensType]} lens</Text>
+                    {lensPrice(item.lensType) > 0 && (
+                      <Text style={styles.cartLensPrice}>+₹{lensPrice(item.lensType)} lens</Text>
                     )}
                   </View>
                 </View>
                 <View style={styles.cartActions}>
-                  <TouchableOpacity onPress={() => removeItem(item.product.id)} style={styles.removeBtn}>
+                  <TouchableOpacity onPress={() => removeItem(cartLineKey(item.product.id, item.lensType))} style={styles.removeBtn}>
                     <Ionicons name="trash-outline" size={16} color={Colors.error} />
                   </TouchableOpacity>
                   <View style={styles.qtyControl}>
                     <TouchableOpacity
-                      onPress={() => item.quantity > 1 ? updateQuantity(item.product.id, item.quantity - 1) : removeItem(item.product.id)}
+                      onPress={() => item.quantity > 1
+                        ? updateQuantity(cartLineKey(item.product.id, item.lensType), item.quantity - 1)
+                        : removeItem(cartLineKey(item.product.id, item.lensType))}
                     >
                       <Ionicons name="remove-circle-outline" size={22} color={Colors.navy} />
                     </TouchableOpacity>
                     <Text style={styles.qty}>{item.quantity}</Text>
-                    <TouchableOpacity onPress={() => updateQuantity(item.product.id, item.quantity + 1)}>
+                    <TouchableOpacity onPress={() => updateQuantity(cartLineKey(item.product.id, item.lensType), item.quantity + 1)}>
                       <Ionicons name="add-circle-outline" size={22} color={Colors.navy} />
                     </TouchableOpacity>
                   </View>
@@ -189,11 +248,41 @@ export default function CartScreen() {
             {/* Promo Input */}
             <View style={styles.promoSection}>
               <Ionicons name="pricetag-outline" size={16} color={Colors.textSecondary} />
-              <Text style={styles.promoHint}>Apply coupon code</Text>
-              <TouchableOpacity style={styles.applyPromo}>
-                <Text style={styles.applyPromoText}>Apply</Text>
+              <TextInput
+                style={styles.promoInput}
+                placeholder="Coupon code (e.g. WELCOME10)"
+                placeholderTextColor={Colors.textLight}
+                autoCapitalize="characters"
+                value={coupon}
+                onChangeText={setCoupon}
+              />
+              <TouchableOpacity style={styles.applyPromo} onPress={applyCoupon}>
+                <Text style={styles.applyPromoText}>{appliedCoupon ? 'Applied' : 'Apply'}</Text>
               </TouchableOpacity>
             </View>
+            {couponError ? <Text style={styles.couponError}>{couponError}</Text> : null}
+
+            {/* Loyalty points */}
+            {pointsBalance > 0 && (
+              <View style={styles.pointsCard}>
+                <Ionicons name="star" size={18} color={Colors.gold} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.pointsTitle}>
+                    {maxRedeem > 0 ? `Redeem ${maxRedeem} points` : 'Reward points'}
+                  </Text>
+                  <Text style={styles.pointsSub}>
+                    {pointsBalance} pts available{maxRedeem > 0 ? ` · ₹${maxRedeem} off` : ''}
+                  </Text>
+                </View>
+                <Switch
+                  value={usePoints && maxRedeem > 0}
+                  disabled={maxRedeem <= 0}
+                  onValueChange={setUsePoints}
+                  trackColor={{ false: Colors.border, true: Colors.gold }}
+                  thumbColor={Colors.white}
+                />
+              </View>
+            )}
 
             {/* Order Summary */}
             <View style={styles.summaryCard}>
@@ -214,10 +303,34 @@ export default function CartScreen() {
                   {shipping === 0 ? 'FREE' : `₹${shipping}`}
                 </Text>
               </View>
+              {memberDiscount > 0 && (
+                <View style={styles.summaryRow}>
+                  <Text style={[styles.summaryLabel, { color: Colors.gold }]}>Gold member (5%)</Text>
+                  <Text style={[styles.summaryValue, { color: '#10B981' }]}>−₹{memberDiscount.toLocaleString()}</Text>
+                </View>
+              )}
+              {couponDiscount > 0 && (
+                <View style={styles.summaryRow}>
+                  <Text style={[styles.summaryLabel, { color: Colors.gold }]}>Coupon {appliedCoupon?.code}</Text>
+                  <Text style={[styles.summaryValue, { color: '#10B981' }]}>−₹{couponDiscount.toLocaleString()}</Text>
+                </View>
+              )}
+              {pointsDiscount > 0 && (
+                <View style={styles.summaryRow}>
+                  <Text style={[styles.summaryLabel, { color: Colors.gold }]}>Points redeemed</Text>
+                  <Text style={[styles.summaryValue, { color: '#10B981' }]}>−₹{pointsDiscount.toLocaleString()}</Text>
+                </View>
+              )}
               <View style={[styles.summaryRow, styles.totalRow]}>
                 <Text style={styles.totalLabel}>Total</Text>
                 <Text style={styles.grandTotal}>₹{grandTotal.toLocaleString()}</Text>
               </View>
+              {earnEstimate > 0 && (
+                <View style={styles.earnRow}>
+                  <Ionicons name="star-outline" size={13} color={Colors.gold} />
+                  <Text style={styles.earnText}>You'll earn {earnEstimate} points on this order{isMember ? ' (2× Gold)' : ''}</Text>
+                </View>
+              )}
             </View>
 
             {/* Trust row */}
@@ -238,6 +351,28 @@ export default function CartScreen() {
 
         {checkoutStep === 'address' && (
           <View style={styles.formSection}>
+            {savedAddresses.length > 0 && (
+              <View style={styles.savedWrap}>
+                <Text style={styles.savedTitle}>Saved Addresses</Text>
+                {savedAddresses.map(a => {
+                  const selected = a.name === address.name && a.flat === address.flat && a.pin === address.pin;
+                  return (
+                    <TouchableOpacity
+                      key={a.id}
+                      style={[styles.savedCard, selected && styles.savedCardActive]}
+                      onPress={() => setAddress({ name: a.name, phone: a.phone, flat: a.flat, street: a.street, city: a.city, state: a.state, pin: a.pin })}
+                    >
+                      <Ionicons name={selected ? 'radio-button-on' : 'radio-button-off'} size={18} color={selected ? Colors.navy : Colors.textLight} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.savedName}>{a.name} · {a.phone}</Text>
+                        <Text style={styles.savedAddr} numberOfLines={1}>{[a.flat, a.street, a.city, a.state, a.pin].filter(Boolean).join(', ')}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+                <Text style={styles.savedHint}>Or enter a new address below</Text>
+              </View>
+            )}
             <Text style={styles.formIntro}>Where should we deliver your order?</Text>
             {ADDRESS_FIELDS.map(({ label, key, keyboard }) => (
               <View key={key} style={styles.inputGroup}>
@@ -294,28 +429,87 @@ export default function CartScreen() {
           disabled={isPlacingOrder}
           onPress={async () => {
             if (checkoutStep === 'cart') { setCheckoutStep('address'); return; }
-            if (checkoutStep === 'address') { setCheckoutStep('payment'); return; }
+            if (checkoutStep === 'address') {
+              if (!addressComplete(address)) {
+                Alert.alert('Incomplete address', 'Please fill in all delivery details before continuing.');
+                return;
+              }
+              setCheckoutStep('payment');
+              return;
+            }
             // Place order
             setIsPlacingOrder(true);
+            const richItems = items.map(item => ({
+              product_id: item.product.id,
+              product_name: item.product.name,
+              product_image: item.product.image,
+              quantity: item.quantity,
+              lens_type: item.lensType,
+              price: item.product.price + lensPrice(item.lensType),
+            }));
+            const lineItems = items.map(item => ({
+              product_id: item.product.id,
+              lens_type: item.lensType,
+              quantity: item.quantity,
+            }));
             try {
-              const order = await placeOrder({
-                items: items.map(item => ({
-                  product_id: item.product.id,
-                  product_name: item.product.name,
-                  product_image: item.product.image,
-                  quantity: item.quantity,
-                  lens_type: item.lensType,
-                  price: item.product.price + (LENS_PRICES[item.lensType] || 0),
-                })),
-                total: grandTotal,
-                paymentMethod,
-                address,
-              });
-              setPlacedOrderId(order.id);
+              if (paymentMethod === 'cod' || IS_DEMO) {
+                // COD (and demo) → server-authoritative place_order (mocked in demo).
+                const order = await placeOrder({ items: richItems, total: grandTotal, paymentMethod, address, coupon: appliedCoupon?.code, redeemPoints: pointsDiscount });
+                setPlacedOrderId(order.id);
+              } else {
+                // Online → Razorpay. The amount and the order are created and
+                // verified server-side; the client never sends prices.
+                const token = session?.access_token;
+                if (!token) throw new Error('Please sign in again to pay.');
+                let rzp;
+                try {
+                  rzp = await createPaymentOrder(lineItems, address, token, appliedCoupon?.code, pointsDiscount);
+                } catch {
+                  Alert.alert('Online payment unavailable', "Online payment isn't enabled yet. Please choose Cash on Delivery to place your order.");
+                  setIsPlacingOrder(false);
+                  return;
+                }
+                const result = (await RazorpayCheckout.open({
+                  key: rzp.keyId,
+                  order_id: rzp.razorpayOrderId,
+                  amount: rzp.amount,
+                  currency: rzp.currency,
+                  name: 'AllenEyeCare',
+                  description: 'Premium eyewear order',
+                  prefill: { name: address.name, contact: address.phone },
+                  theme: { color: Colors.navy },
+                })) as { razorpay_payment_id: string; razorpay_signature: string };
+                const verified = await verifyPayment(
+                  {
+                    razorpay_order_id: rzp.razorpayOrderId,
+                    razorpay_payment_id: result.razorpay_payment_id,
+                    razorpay_signature: result.razorpay_signature,
+                    items: lineItems,
+                    address,
+                    payment_method: paymentMethod,
+                    coupon: appliedCoupon?.code ?? null,
+                    redeem_points: pointsDiscount,
+                  },
+                  token
+                );
+                setPlacedOrderId(verified.orderId);
+                await refresh();
+              }
+              // Persist this address for next time (best-effort, dedup by key fields).
+              const alreadySaved = savedAddresses.some(
+                a => a.name === address.name && a.flat === address.flat && a.pin === address.pin
+              );
+              if (!alreadySaved && addressComplete(address)) {
+                addAddress(user?.id, address).catch(() => {});
+              }
+              setPlacedTotal(grandTotal);
               clearCart();
               setCheckoutStep('success');
-            } catch {
-              Alert.alert('Order Failed', 'Could not place your order. Please try again.');
+            } catch (e: any) {
+              // Razorpay rejects (including user cancel) carry a `description`.
+              const msg = e?.description || e?.error?.description || e?.message || 'Could not place your order. Please try again.';
+              Alert.alert('Payment Failed', String(msg));
             } finally {
               setIsPlacingOrder(false);
             }
@@ -439,6 +633,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   promoHint: { flex: 1, fontFamily: 'DMSans_400Regular', fontSize: 14, color: Colors.textSecondary },
+  promoInput: { flex: 1, fontFamily: 'DMSans_400Regular', fontSize: 14, color: Colors.textPrimary },
+  couponError: { fontFamily: 'DMSans_400Regular', fontSize: 12, color: Colors.error, marginHorizontal: 18, marginTop: -8, marginBottom: 4 },
   applyPromo: { backgroundColor: Colors.cream, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 6 },
   applyPromoText: { fontFamily: 'DMSans_700Bold', fontSize: 13, color: Colors.navy },
 
@@ -461,6 +657,17 @@ const styles = StyleSheet.create({
   },
   totalLabel: { fontFamily: 'DMSans_700Bold', fontSize: 15, color: Colors.textPrimary },
   grandTotal: { fontFamily: 'DMSans_700Bold', fontSize: 20, color: Colors.navy },
+  earnRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 8 },
+  earnText: { fontFamily: 'DMSans_500Medium', fontSize: 12, color: Colors.gold },
+
+  pointsCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: Colors.white, marginHorizontal: 16, marginTop: 4, marginBottom: 4,
+    borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  pointsTitle: { fontFamily: 'DMSans_700Bold', fontSize: 14, color: Colors.textPrimary },
+  pointsSub: { fontFamily: 'DMSans_400Regular', fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
 
   trustRow: {
     flexDirection: 'row',
@@ -482,6 +689,17 @@ const styles = StyleSheet.create({
     color: Colors.navy,
     marginBottom: 20,
   },
+  savedWrap: { marginBottom: 20 },
+  savedTitle: { fontFamily: 'DMSans_700Bold', fontSize: 14, color: Colors.textPrimary, marginBottom: 10 },
+  savedCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: Colors.white, borderWidth: 1.5, borderColor: Colors.border,
+    borderRadius: 10, padding: 12, marginBottom: 8,
+  },
+  savedCardActive: { borderColor: Colors.navy, backgroundColor: '#F0F4F9' },
+  savedName: { fontFamily: 'DMSans_700Bold', fontSize: 13, color: Colors.textPrimary, marginBottom: 2 },
+  savedAddr: { fontFamily: 'DMSans_400Regular', fontSize: 12, color: Colors.textSecondary },
+  savedHint: { fontFamily: 'DMSans_400Regular', fontSize: 12, color: Colors.textLight, marginTop: 4 },
   inputGroup: { marginBottom: 16 },
   inputLabel: { fontFamily: 'DMSans_500Medium', fontSize: 13, color: Colors.textSecondary, marginBottom: 6 },
   inputBox: {

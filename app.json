@@ -15,7 +15,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.alleneyecare.app"
+      "bundleIdentifier": "com.alleneyecare.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Used for virtual try-on, so you can see frames on your face."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -23,7 +26,8 @@
         "backgroundColor": "#0D1B2A"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.alleneyecare.app"
+      "package": "com.alleneyecare.app",
+      "permissions": ["CAMERA"]
     },
     "web": {
       "favicon": "./assets/favicon.png",

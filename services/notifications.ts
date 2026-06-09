@@ -40,6 +40,52 @@ export async function registerForPushNotifications(userId: string): Promise<void
     .eq('id', userId);
 }
 
+export async function getNotificationStatus(): Promise<string> {
+  const { status } = await Notifications.getPermissionsAsync();
+  return status;
+}
+
+// Requests permission (if needed), sets up the Android channel, and registers the
+// Expo push token on a real device. Returns the final permission status. Safe to
+// call from a settings screen — on emulators the local-notification path still works.
+export async function enableNotifications(userId?: string | null): Promise<string> {
+  const { status: existing } = await Notifications.getPermissionsAsync();
+  let finalStatus = existing;
+  if (existing !== 'granted') {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
+  }
+  if (finalStatus !== 'granted') return finalStatus;
+
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('orders', {
+      name: 'Order Updates',
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 250, 250, 250],
+    });
+  }
+
+  if (userId && Device.isDevice) {
+    try {
+      const tokenData = await Notifications.getExpoPushTokenAsync();
+      await (supabase.from('profiles') as any).update({ push_token: tokenData.data }).eq('id', userId);
+    } catch {
+      /* push token registration is best-effort (e.g. no projectId / emulator) */
+    }
+  }
+  return finalStatus;
+}
+
+export async function sendTestNotification(): Promise<void> {
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: 'AllenEyeCare',
+      body: "Notifications are on — we'll keep you posted on your orders. 🎉",
+    },
+    trigger: null,
+  });
+}
+
 const STATUS_MESSAGES: Record<string, string> = {
   confirmed: 'Your order has been confirmed!',
   processing: 'Your order is being processed',

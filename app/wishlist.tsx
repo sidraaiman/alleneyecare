@@ -5,7 +5,6 @@ import {
   StyleSheet,
   FlatList,
   TouchableOpacity,
-  Image,
   StatusBar,
 } from 'react-native';
 import { router } from 'expo-router';
@@ -15,6 +14,7 @@ import Animated, { FadeInDown, ZoomIn } from 'react-native-reanimated';
 import { useCart } from '@/context/CartContext';
 import { products as allProducts } from '@/data/products';
 import { Colors } from '@/constants/Colors';
+import ProductImage from '@/components/ProductImage';
 
 export default function WishlistScreen() {
   const insets = useSafeAreaInsets();
@@ -91,7 +91,7 @@ export default function WishlistScreen() {
               onPress={() => router.push(`/product/${item.id}`)}
               activeOpacity={0.9}
             >
-              <Image source={{ uri: item.image }} style={styles.image} />
+              <ProductImage uri={item.image} style={styles.image} />
               {item.isNew && (
                 <View style={styles.newBadge}>
                   <Text style={styles.newBadgeText}>NEW</Text>

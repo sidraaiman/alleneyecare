@@ -1,11 +1,11 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Image,
+  TextInput,
   Dimensions,
   Modal,
   Alert,
@@ -16,18 +16,35 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/Colors';
-import { products as localProducts } from '../../data/products';
+import { type Product, products as localProducts } from '../../data/products';
 import { useProducts } from '../../hooks/useProducts';
 import { useCart, LensType } from '../../context/CartContext';
+import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../lib/supabase';
+import { dbProductToApp } from '../../lib/database.types';
+import { IS_DEMO } from '../../lib/config';
+import ProductImage from '@/components/ProductImage';
+import {
+  VISION_TYPES,
+  packagesForVision,
+  lensPrice,
+  lensRequiresPower,
+  type VisionType,
+} from '../../data/lenses';
 
 const { width } = Dimensions.get('window');
 
-const LENS_OPTIONS: { type: LensType; label: string; desc: string; price: number }[] = [
-  { type: 'non-powered', label: 'Non-Powered', desc: 'No lens power / 0 power', price: 0 },
-  { type: 'single-vision', label: 'Single Vision', desc: 'For near or distance correction', price: 399 },
-  { type: 'bifocal', label: 'Bifocal', desc: 'For near and distance both', price: 699 },
-  { type: 'progressive', label: 'Progressive', desc: 'Advanced no-line bifocal', price: 999 },
-];
+const num = (s: string) => (s.trim() === '' ? null : Number(s));
+const int = (s: string) => (s.trim() === '' ? null : parseInt(s, 10));
+
+// Face-shape finder (no camera) — maps a face shape to recommended frame shapes.
+const FACE_FINDER: Record<string, { advice: string; shapes: string[]; shop: string }> = {
+  Oval: { advice: 'Lucky you — most frames suit an oval face.', shapes: ['Wayfarer', 'Aviator', 'Cat-Eye'], shop: 'Wayfarer' },
+  Round: { advice: 'Angular frames add definition to a round face.', shapes: ['Rectangle', 'Square', 'Wayfarer'], shop: 'Rectangle' },
+  Square: { advice: 'Soften a strong jaw with curved frames.', shapes: ['Round', 'Oval', 'Cat-Eye'], shop: 'Round' },
+  Heart: { advice: 'Balance a wider forehead with rounded frames.', shapes: ['Round', 'Aviator'], shop: 'Round' },
+  Diamond: { advice: 'Highlight your cheekbones with cat-eye or oval frames.', shapes: ['Cat-Eye', 'Oval'], shop: 'Cat-Eye' },
+};
 
 export default function ProductDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -37,12 +54,55 @@ export default function ProductDetailScreen() {
   const { addItem, toggleWishlist, isInWishlist } = useCart();
 
   const [activeImage, setActiveImage] = useState(0);
+  const [selectedVision, setSelectedVision] = useState<VisionType>('non-powered');
   const [selectedLens, setSelectedLens] = useState<LensType>('non-powered');
   const [prescriptionModal, setPrescriptionModal] = useState(false);
   const [tryOnModal, setTryOnModal] = useState(false);
+  const [faceShape, setFaceShape] = useState<string | null>(null);
   const [addedToCart, setAddedToCart] = useState(false);
+  const [rx, setRx] = useState({ r_sph: '', r_cyl: '', r_axis: '', l_sph: '', l_cyl: '', l_axis: '', pd: '' });
+  const [savedRx, setSavedRx] = useState<{ id: string; name: string }[]>([]);
+  const [reviews, setReviews] = useState<{ id: string; rating: number; title: string | null; body: string | null; verified_purchase: boolean; created_at: string }[]>([]);
+  const [myRating, setMyRating] = useState(0);
+  const [myReview, setMyReview] = useState('');
 
   const scrollRef = useRef<ScrollView>(null);
+  const galleryRef = useRef<ScrollView>(null);
+  const { user } = useAuth();
+  const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
+
+  useEffect(() => {
+    if (!product) return;
+    const fallback = products
+      .filter(p => p.category === product.category && p.id !== product.id)
+      .slice(0, 4);
+    if (IS_DEMO) {
+      setRelatedProducts(fallback);
+      setReviews([{ id: 'demo-r1', rating: 5, title: null, body: 'Great quality and a perfect fit!', verified_purchase: true, created_at: '2026-05-01T00:00:00Z' }]);
+      return;
+    }
+    let active = true;
+    (async () => {
+      const { data, error } = await (supabase.rpc as any)('recommended_products', {
+        p_product_id: product.id,
+        p_limit: 4,
+      });
+      if (active) {
+        setRelatedProducts(error || !data ? fallback : (data as unknown[]).map(r => dbProductToApp(r as never)));
+      }
+    })();
+    supabase.from('reviews').select('id, rating, title, body, verified_purchase, created_at').eq('product_id', product.id).order('created_at', { ascending: false })
+      .then(({ data }) => { if (active && data) setReviews(data as { id: string; rating: number; title: string | null; body: string | null; verified_purchase: boolean; created_at: string }[]); }, () => {});
+    // Best-effort behavioural event (RLS requires the signed-in user).
+    if (user?.id) {
+      supabase.from('events').insert({ user_id: user.id, type: 'view', product_id: product.id } as never)
+        .then(() => {}, () => {});
+      supabase.from('prescriptions').select('id, name').eq('user_id', user.id).order('created_at', { ascending: false })
+        .then(({ data }) => { if (active && data) setSavedRx(data as { id: string; name: string }[]); }, () => {});
+    }
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product?.id, user?.id, products]);
 
   if (!product) {
     return (
@@ -56,14 +116,17 @@ export default function ProductDetailScreen() {
   }
 
   const wishlisted = isInWishlist(product.id);
-  const lensExtra = LENS_OPTIONS.find(l => l.type === selectedLens)?.price || 0;
+  const outOfStock = product.stockCount !== undefined && product.stockCount <= 0;
+  const lensExtra = lensPrice(selectedLens);
+  const requiresPower = lensRequiresPower(selectedLens);
   const totalPrice = product.price + lensExtra;
   const discount = product.originalPrice
     ? Math.round((1 - product.price / product.originalPrice) * 100)
     : 0;
 
   const handleAddToCart = () => {
-    if (selectedLens !== 'non-powered') {
+    if (outOfStock) return;
+    if (requiresPower) {
       setPrescriptionModal(true);
       return;
     }
@@ -72,16 +135,39 @@ export default function ProductDetailScreen() {
     setTimeout(() => setAddedToCart(false), 2000);
   };
 
-  const handleConfirmAdd = () => {
-    addItem({ product, quantity: 1, lensType: selectedLens, hasPower: true });
+  const addPowered = (prescription: string) => {
+    addItem({ product, quantity: 1, lensType: selectedLens, hasPower: true, prescription });
     setPrescriptionModal(false);
     setAddedToCart(true);
     setTimeout(() => setAddedToCart(false), 2000);
   };
 
-  const relatedProducts = products
-    .filter(p => p.category === product.category && p.id !== product.id)
-    .slice(0, 4);
+  const handleConfirmAdd = () => {
+    const summary = `R ${rx.r_sph || '—'}/${rx.r_cyl || '—'}x${rx.r_axis || '—'} · L ${rx.l_sph || '—'}/${rx.l_cyl || '—'}x${rx.l_axis || '—'} · PD ${rx.pd || '—'}`;
+    if (!IS_DEMO && user?.id) {
+      supabase.from('prescriptions').insert({
+        user_id: user.id,
+        name: `${product.name} Rx`,
+        r_sph: num(rx.r_sph), r_cyl: num(rx.r_cyl), r_axis: int(rx.r_axis),
+        l_sph: num(rx.l_sph), l_cyl: num(rx.l_cyl), l_axis: int(rx.l_axis),
+        pd: num(rx.pd),
+      } as never).then(() => {}, () => {});
+    }
+    addPowered(summary);
+  };
+
+  const submitReview = () => {
+    if (myRating < 1 || !product) return;
+    const local = { id: `local-${Date.now()}`, rating: myRating, title: null, body: myReview.trim() || null, verified_purchase: false, created_at: new Date().toISOString() };
+    if (!IS_DEMO && user?.id) {
+      supabase.from('reviews')
+        .upsert({ product_id: product.id, user_id: user.id, rating: myRating, body: myReview.trim() || null } as never, { onConflict: 'product_id,user_id' })
+        .then(() => {}, () => {});
+    }
+    setReviews(prev => [local, ...prev.filter(r => !r.id.startsWith('local-'))]);
+    setMyRating(0);
+    setMyReview('');
+  };
 
   return (
     <View style={[styles.container]}>
@@ -89,6 +175,7 @@ export default function ProductDetailScreen() {
         {/* Image Gallery */}
         <View style={styles.galleryContainer}>
           <ScrollView
+            ref={galleryRef}
             horizontal
             pagingEnabled
             showsHorizontalScrollIndicator={false}
@@ -96,7 +183,7 @@ export default function ProductDetailScreen() {
             scrollEventThrottle={16}
           >
             {product.images.map((img, i) => (
-              <Image key={i} source={{ uri: img }} style={styles.mainImage} resizeMode="cover" />
+              <ProductImage key={i} uri={img} style={styles.mainImage} />
             ))}
           </ScrollView>
 
@@ -117,7 +204,7 @@ export default function ProductDetailScreen() {
           </TouchableOpacity>
 
           {/* 360° badge */}
-          <TouchableOpacity style={styles.threeSixtyBadge}>
+          <TouchableOpacity style={styles.threeSixtyBadge} onPress={() => router.push(`/tryon/${product.id}`)}>
             <Ionicons name="refresh-circle-outline" size={16} color={Colors.white} />
             <Text style={styles.threeSixtyText}>360°</Text>
           </TouchableOpacity>
@@ -129,8 +216,9 @@ export default function ProductDetailScreen() {
             <TouchableOpacity
               key={i}
               style={[styles.thumb, activeImage === i && styles.thumbActive]}
+              onPress={() => { setActiveImage(i); galleryRef.current?.scrollTo({ x: i * width, animated: true }); }}
             >
-              <Image source={{ uri: img }} style={styles.thumbImage} />
+              <ProductImage uri={img} style={styles.thumbImage} />
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -177,13 +265,17 @@ export default function ProductDetailScreen() {
             )}
           </View>
 
-          {/* Virtual Try-On */}
-          <TouchableOpacity style={styles.tryOnBtn} onPress={() => setTryOnModal(true)}>
+          {/* Virtual Try-On (live AR) + face-shape finder */}
+          <TouchableOpacity style={styles.tryOnBtn} onPress={() => router.push(`/tryon/${product.id}`)}>
             <Ionicons name="camera-outline" size={18} color={Colors.navy} />
-            <Text style={styles.tryOnBtnText}>Virtual Try-On</Text>
+            <Text style={styles.tryOnBtnText}>Virtual Try-On · Live AR</Text>
             <View style={styles.tryOnBeta}>
               <Text style={styles.tryOnBetaText}>BETA</Text>
             </View>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.finderLink} onPress={() => setTryOnModal(true)}>
+            <Ionicons name="sparkles-outline" size={14} color={Colors.gold} />
+            <Text style={styles.finderLinkText}>Not sure? Find your face shape</Text>
           </TouchableOpacity>
 
           {/* Frame Specs */}
@@ -221,11 +313,25 @@ export default function ProductDetailScreen() {
             </View>
           </View>
 
-          {/* Lens Customization */}
+          {/* Lens selection wizard */}
           <View style={styles.lensSection}>
-            <Text style={styles.sectionTitle}>Select Lens Type</Text>
-            <Text style={styles.sectionSub}>Customize your lenses to your prescription needs</Text>
-            {LENS_OPTIONS.map(opt => (
+            <Text style={styles.sectionTitle}>Choose Your Lens</Text>
+            <Text style={styles.sectionSub}>Step 1 — Vision type</Text>
+            <View style={styles.visionRow}>
+              {VISION_TYPES.map(v => (
+                <TouchableOpacity
+                  key={v.key}
+                  style={[styles.visionCard, selectedVision === v.key && styles.visionCardActive]}
+                  onPress={() => { setSelectedVision(v.key); setSelectedLens(packagesForVision(v.key)[0].type); }}
+                >
+                  <Ionicons name={v.icon as any} size={20} color={selectedVision === v.key ? Colors.navy : Colors.textSecondary} />
+                  <Text style={[styles.visionLabel, selectedVision === v.key && { color: Colors.navy }]} numberOfLines={1}>{v.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={[styles.sectionSub, { marginTop: 10 }]}>Step 2 — Lens package</Text>
+            {packagesForVision(selectedVision).map(opt => (
               <TouchableOpacity
                 key={opt.type}
                 style={[styles.lensCard, selectedLens === opt.type && styles.lensCardActive]}
@@ -236,15 +342,11 @@ export default function ProductDetailScreen() {
                     {selectedLens === opt.type && <View style={styles.radioFill} />}
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.lensLabel, selectedLens === opt.type && { color: Colors.navy }]}>
-                      {opt.label}
-                    </Text>
-                    <Text style={styles.lensDesc}>{opt.desc}</Text>
+                    <Text style={[styles.lensLabel, selectedLens === opt.type && { color: Colors.navy }]}>{opt.label}</Text>
+                    <Text style={styles.lensDesc}>{opt.description}</Text>
                   </View>
                 </View>
-                <Text style={styles.lensPrice}>
-                  {opt.price === 0 ? 'Free' : `+₹${opt.price}`}
-                </Text>
+                <Text style={styles.lensPrice}>{opt.price === 0 ? 'Free' : `+₹${opt.price}`}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -273,7 +375,7 @@ export default function ProductDetailScreen() {
                     style={styles.relatedCard}
                     onPress={() => router.push(`/product/${p.id}`)}
                   >
-                    <Image source={{ uri: p.image }} style={styles.relatedImage} />
+                    <ProductImage uri={p.image} style={styles.relatedImage} />
                     <Text style={styles.relatedName} numberOfLines={1}>{p.name}</Text>
                     <Text style={styles.relatedPrice}>₹{p.price.toLocaleString()}</Text>
                   </TouchableOpacity>
@@ -281,6 +383,48 @@ export default function ProductDetailScreen() {
               </ScrollView>
             </View>
           )}
+
+          {/* Reviews */}
+          <View style={styles.reviewsSection}>
+            <Text style={styles.sectionTitle}>Reviews{reviews.length ? ` (${reviews.length})` : ''}</Text>
+            <View style={styles.writeReview}>
+              <Text style={styles.writeLabel}>Rate this product</Text>
+              <View style={styles.starsRow}>
+                {[1, 2, 3, 4, 5].map(s => (
+                  <TouchableOpacity key={s} onPress={() => setMyRating(s)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                    <Ionicons name={s <= myRating ? 'star' : 'star-outline'} size={26} color={Colors.gold} />
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TextInput
+                style={styles.reviewInput}
+                value={myReview}
+                onChangeText={setMyReview}
+                placeholder="Share your thoughts (optional)"
+                placeholderTextColor={Colors.textLight}
+                multiline
+              />
+              <TouchableOpacity style={[styles.reviewSubmit, myRating < 1 && { opacity: 0.5 }]} disabled={myRating < 1} onPress={submitReview}>
+                <Text style={styles.reviewSubmitText}>Submit review</Text>
+              </TouchableOpacity>
+            </View>
+            {reviews.length === 0 ? (
+              <Text style={styles.noReviews}>No reviews yet — be the first!</Text>
+            ) : reviews.map(r => (
+              <View key={r.id} style={styles.reviewCard}>
+                <View style={styles.reviewHead}>
+                  <View style={{ flexDirection: 'row' }}>
+                    {[1, 2, 3, 4, 5].map(s => (
+                      <Ionicons key={s} name={s <= r.rating ? 'star' : 'star-outline'} size={13} color={Colors.gold} />
+                    ))}
+                  </View>
+                  {r.verified_purchase && <Text style={styles.verifiedTag}>✓ Verified purchase</Text>}
+                </View>
+                {!!r.body && <Text style={styles.reviewBody}>{r.body}</Text>}
+                <Text style={styles.reviewDate}>{new Date(r.created_at).toLocaleDateString()}</Text>
+              </View>
+            ))}
+          </View>
         </View>
       </ScrollView>
 
@@ -302,16 +446,21 @@ export default function ProductDetailScreen() {
             />
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.addToCartBtn, addedToCart && { backgroundColor: '#10B981' }]}
+            style={[
+              styles.addToCartBtn,
+              addedToCart && { backgroundColor: '#10B981' },
+              outOfStock && { backgroundColor: Colors.textMuted },
+            ]}
             onPress={handleAddToCart}
+            disabled={outOfStock}
           >
             <Ionicons
-              name={addedToCart ? 'checkmark-circle-outline' : 'bag-add-outline'}
+              name={outOfStock ? 'close-circle-outline' : addedToCart ? 'checkmark-circle-outline' : 'bag-add-outline'}
               size={18}
               color={Colors.white}
             />
             <Text style={styles.addToCartText}>
-              {addedToCart ? 'Added to Bag!' : 'Add to Bag'}
+              {outOfStock ? 'Out of Stock' : addedToCart ? 'Added to Bag!' : 'Add to Bag'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -322,34 +471,56 @@ export default function ProductDetailScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.prescriptionModal}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Upload Prescription</Text>
+              <Text style={styles.modalTitle}>Your Prescription</Text>
               <TouchableOpacity onPress={() => setPrescriptionModal(false)}>
                 <Ionicons name="close" size={22} color={Colors.navy} />
               </TouchableOpacity>
             </View>
             <ScrollView style={styles.prescriptionBody}>
               <Text style={styles.prescriptionInfo}>
-                Please provide your eye prescription to continue with powered lenses.
+                Enter your prescription for powered lenses — or add now and submit it later.
               </Text>
-              <TouchableOpacity style={styles.uploadOption}>
-                <Ionicons name="camera-outline" size={24} color={Colors.gold} />
-                <Text style={styles.uploadOptionText}>Take Photo of Prescription</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.uploadOption}>
-                <Ionicons name="cloud-upload-outline" size={24} color={Colors.gold} />
-                <Text style={styles.uploadOptionText}>Upload from Gallery</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.uploadOption}>
-                <Ionicons name="create-outline" size={24} color={Colors.gold} />
-                <Text style={styles.uploadOptionText}>Enter Prescription Manually</Text>
-              </TouchableOpacity>
+
+              {savedRx.length > 0 && (
+                <View style={{ marginBottom: 16 }}>
+                  <Text style={styles.rxGroupTitle}>Use a saved prescription</Text>
+                  {savedRx.map(s => (
+                    <TouchableOpacity key={s.id} style={styles.savedRxRow} onPress={() => addPowered(`Saved: ${s.name}`)}>
+                      <Ionicons name="document-text-outline" size={18} color={Colors.gold} />
+                      <Text style={styles.savedRxText} numberOfLines={1}>{s.name}</Text>
+                      <Ionicons name="chevron-forward" size={16} color={Colors.textLight} />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              <Text style={styles.rxGroupTitle}>Enter manually</Text>
+              <View style={styles.rxHeaderRow}>
+                <Text style={[styles.rxEyeLabel, { color: Colors.textSecondary }]}> </Text>
+                <Text style={styles.rxCellHead}>SPH</Text>
+                <Text style={styles.rxCellHead}>CYL</Text>
+                <Text style={styles.rxCellHead}>AXIS</Text>
+              </View>
+              <View style={styles.rxRow}>
+                <Text style={styles.rxEyeLabel}>R</Text>
+                <TextInput style={styles.rxInput} value={rx.r_sph} onChangeText={t => setRx({ ...rx, r_sph: t })} keyboardType="numbers-and-punctuation" placeholder="0.00" placeholderTextColor={Colors.textLight} />
+                <TextInput style={styles.rxInput} value={rx.r_cyl} onChangeText={t => setRx({ ...rx, r_cyl: t })} keyboardType="numbers-and-punctuation" placeholder="0.00" placeholderTextColor={Colors.textLight} />
+                <TextInput style={styles.rxInput} value={rx.r_axis} onChangeText={t => setRx({ ...rx, r_axis: t })} keyboardType="number-pad" placeholder="0" placeholderTextColor={Colors.textLight} />
+              </View>
+              <View style={styles.rxRow}>
+                <Text style={styles.rxEyeLabel}>L</Text>
+                <TextInput style={styles.rxInput} value={rx.l_sph} onChangeText={t => setRx({ ...rx, l_sph: t })} keyboardType="numbers-and-punctuation" placeholder="0.00" placeholderTextColor={Colors.textLight} />
+                <TextInput style={styles.rxInput} value={rx.l_cyl} onChangeText={t => setRx({ ...rx, l_cyl: t })} keyboardType="numbers-and-punctuation" placeholder="0.00" placeholderTextColor={Colors.textLight} />
+                <TextInput style={styles.rxInput} value={rx.l_axis} onChangeText={t => setRx({ ...rx, l_axis: t })} keyboardType="number-pad" placeholder="0" placeholderTextColor={Colors.textLight} />
+              </View>
+              <View style={styles.rxPdRow}>
+                <Text style={styles.rxPdLabel}>PD (mm)</Text>
+                <TextInput style={[styles.rxInput, { flex: 0, width: 90 }]} value={rx.pd} onChangeText={t => setRx({ ...rx, pd: t })} keyboardType="number-pad" placeholder="63" placeholderTextColor={Colors.textLight} />
+              </View>
             </ScrollView>
             <View style={styles.prescriptionFooter}>
-              <TouchableOpacity
-                style={styles.skipBtn}
-                onPress={() => { setPrescriptionModal(false); addItem({ product, quantity: 1, lensType: selectedLens, hasPower: true }); }}
-              >
-                <Text style={styles.skipBtnText}>Add Now, Upload Later</Text>
+              <TouchableOpacity style={styles.skipBtn} onPress={() => addPowered('Submit later')}>
+                <Text style={styles.skipBtnText}>Add, submit later</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirmAdd}>
                 <Text style={styles.confirmBtnText}>Confirm & Add</Text>
@@ -364,19 +535,39 @@ export default function ProductDetailScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.tryOnModal}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Virtual Try-On</Text>
+              <Text style={[styles.modalTitle, { color: Colors.white }]}>Find Your Fit</Text>
               <TouchableOpacity onPress={() => setTryOnModal(false)}>
                 <Ionicons name="close" size={22} color={Colors.white} />
               </TouchableOpacity>
             </View>
-            <View style={styles.tryOnPlaceholder}>
-              <Ionicons name="camera" size={64} color="rgba(255,255,255,0.4)" />
-              <Text style={styles.tryOnPlaceholderTitle}>Face Camera Here</Text>
-              <Text style={styles.tryOnPlaceholderSub}>AR Virtual Try-On{'\n'}Coming Soon</Text>
+            <ScrollView contentContainerStyle={styles.finderBody}>
               <View style={styles.tryOnFrameOverlay}>
-                <Image source={{ uri: product.image }} style={styles.tryOnFrameImage} />
+                <ProductImage uri={product.image} style={styles.tryOnFrameImage} contentFit="contain" />
               </View>
-            </View>
+              <Text style={styles.finderTitle}>What's your face shape?</Text>
+              <Text style={styles.finderSub}>Pick one for instant frame recommendations.</Text>
+              <View style={styles.faceChips}>
+                {Object.keys(FACE_FINDER).map(f => (
+                  <TouchableOpacity key={f} style={[styles.faceChip, faceShape === f && styles.faceChipActive]} onPress={() => setFaceShape(f)}>
+                    <Text style={[styles.faceChipText, faceShape === f && { color: Colors.navy }]}>{f}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {faceShape && (
+                <View style={styles.finderResult}>
+                  <Text style={styles.finderAdvice}>{FACE_FINDER[faceShape].advice}</Text>
+                  <Text style={styles.finderRec}>Recommended: {FACE_FINDER[faceShape].shapes.join(', ')}</Text>
+                  <TouchableOpacity
+                    style={styles.finderShopBtn}
+                    onPress={() => { setTryOnModal(false); router.push({ pathname: '/products', params: { shape: FACE_FINDER[faceShape].shop } }); }}
+                  >
+                    <Ionicons name="grid-outline" size={16} color={Colors.navy} />
+                    <Text style={styles.finderShopText}>Shop matching frames</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              <Text style={styles.tryOnNote}>Live camera AR try-on (3D) is coming next — it needs on-device face tracking plus per-frame 3D / transparent assets.</Text>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -518,6 +709,8 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   tryOnBetaText: { fontFamily: 'DMSans_700Bold', fontSize: 9, color: Colors.gold },
+  finderLink: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: -14, marginBottom: 22 },
+  finderLinkText: { fontFamily: 'DMSans_500Medium', fontSize: 13, color: Colors.gold, textDecorationLine: 'underline' },
 
   sectionTitle: {
     fontFamily: 'CormorantGaramond_700Bold',
@@ -607,6 +800,33 @@ const styles = StyleSheet.create({
   lensDesc: { fontFamily: 'DMSans_400Regular', fontSize: 12, color: Colors.textLight },
   lensPrice: { fontFamily: 'DMSans_700Bold', fontSize: 14, color: Colors.gold },
 
+  // Vision-type wizard
+  visionRow: { flexDirection: 'row', gap: 8, marginBottom: 6 },
+  visionCard: {
+    flex: 1, alignItems: 'center', gap: 6, paddingVertical: 12, paddingHorizontal: 4,
+    borderRadius: 10, borderWidth: 1.5, borderColor: Colors.border, backgroundColor: Colors.white,
+  },
+  visionCardActive: { borderColor: Colors.navy, backgroundColor: '#F0F4F9' },
+  visionLabel: { fontFamily: 'DMSans_500Medium', fontSize: 11, color: Colors.textSecondary, textAlign: 'center' },
+
+  // Prescription form
+  rxGroupTitle: { fontFamily: 'DMSans_700Bold', fontSize: 13, color: Colors.textPrimary, marginBottom: 8 },
+  savedRxRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderRadius: 10,
+    borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.cream, marginBottom: 8,
+  },
+  savedRxText: { flex: 1, fontFamily: 'DMSans_500Medium', fontSize: 14, color: Colors.textPrimary },
+  rxHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  rxRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  rxEyeLabel: { width: 24, fontFamily: 'DMSans_700Bold', fontSize: 14, color: Colors.navy, textAlign: 'center' },
+  rxCellHead: { flex: 1, fontFamily: 'DMSans_500Medium', fontSize: 11, color: Colors.textSecondary, textAlign: 'center' },
+  rxInput: {
+    flex: 1, height: 42, borderWidth: 1.5, borderColor: Colors.border, borderRadius: 8,
+    textAlign: 'center', fontFamily: 'DMSans_500Medium', fontSize: 14, color: Colors.textPrimary, backgroundColor: Colors.white,
+  },
+  rxPdRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4, marginBottom: 8 },
+  rxPdLabel: { fontFamily: 'DMSans_500Medium', fontSize: 14, color: Colors.textSecondary },
+
   // Description
   descSection: { marginBottom: 24 },
   description: {
@@ -629,6 +849,21 @@ const styles = StyleSheet.create({
 
   // Related
   relatedSection: { marginBottom: 32 },
+
+  // Reviews
+  reviewsSection: { marginBottom: 32 },
+  writeReview: { backgroundColor: Colors.white, borderRadius: 12, borderWidth: 1, borderColor: Colors.border, padding: 14, marginBottom: 14 },
+  writeLabel: { fontFamily: 'DMSans_500Medium', fontSize: 13, color: Colors.textSecondary, marginBottom: 6 },
+  starsRow: { flexDirection: 'row', gap: 6, marginBottom: 10 },
+  reviewInput: { minHeight: 44, borderWidth: 1, borderColor: Colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontFamily: 'DMSans_400Regular', fontSize: 14, color: Colors.textPrimary, backgroundColor: Colors.cream, marginBottom: 10 },
+  reviewSubmit: { backgroundColor: Colors.navy, borderRadius: 8, paddingVertical: 11, alignItems: 'center' },
+  reviewSubmitText: { fontFamily: 'DMSans_700Bold', fontSize: 14, color: Colors.white },
+  reviewCard: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.borderLight },
+  reviewHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  verifiedTag: { fontFamily: 'DMSans_500Medium', fontSize: 11, color: Colors.success },
+  reviewBody: { fontFamily: 'DMSans_400Regular', fontSize: 14, color: Colors.textPrimary, lineHeight: 20, marginBottom: 4 },
+  reviewDate: { fontFamily: 'DMSans_400Regular', fontSize: 11, color: Colors.textLight },
+  noReviews: { fontFamily: 'DMSans_400Regular', fontSize: 13, color: Colors.textSecondary },
   relatedScroll: { marginHorizontal: -20 },
   relatedCard: {
     width: 130,
@@ -783,6 +1018,21 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 22,
   },
-  tryOnFrameOverlay: { marginTop: 20, opacity: 0.6 },
+  tryOnFrameOverlay: { alignItems: 'center', opacity: 0.85, marginBottom: 8 },
   tryOnFrameImage: { width: 200, height: 120, resizeMode: 'contain' },
+
+  // Face-shape finder
+  finderBody: { padding: 20, gap: 10 },
+  finderTitle: { fontFamily: 'CormorantGaramond_700Bold', fontSize: 24, color: Colors.white, textAlign: 'center' },
+  finderSub: { fontFamily: 'DMSans_400Regular', fontSize: 13, color: 'rgba(255,255,255,0.6)', textAlign: 'center', marginBottom: 6 },
+  faceChips: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8 },
+  faceChip: { paddingHorizontal: 16, paddingVertical: 9, borderRadius: 22, borderWidth: 1.5, borderColor: Colors.gold, backgroundColor: 'transparent' },
+  faceChipActive: { backgroundColor: Colors.gold },
+  faceChipText: { fontFamily: 'DMSans_700Bold', fontSize: 13, color: Colors.gold },
+  finderResult: { backgroundColor: Colors.navyLight, borderRadius: 12, padding: 16, gap: 8, marginTop: 6 },
+  finderAdvice: { fontFamily: 'DMSans_400Regular', fontSize: 14, color: Colors.white, lineHeight: 20 },
+  finderRec: { fontFamily: 'DMSans_700Bold', fontSize: 13, color: Colors.gold },
+  finderShopBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.gold, borderRadius: 10, paddingVertical: 12, marginTop: 4 },
+  finderShopText: { fontFamily: 'DMSans_700Bold', fontSize: 14, color: Colors.navy },
+  tryOnNote: { fontFamily: 'DMSans_400Regular', fontSize: 12, color: 'rgba(255,255,255,0.5)', textAlign: 'center', lineHeight: 17, marginTop: 8 },
 });

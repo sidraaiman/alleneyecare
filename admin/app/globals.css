@@ -1,0 +1,50 @@
+:root {
+  --navy: #0d1b2a;
+  --gold: #c9a84c;
+  --cream: #faf8f5;
+  --border: #e5e5ea;
+  --text: #1c1c1e;
+  --muted: #6b7280;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--cream);
+  color: var(--text);
+}
+a { color: var(--navy); text-decoration: none; }
+.center { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+.nav {
+  display: flex; align-items: center; gap: 20px;
+  background: var(--navy); color: #fff; padding: 14px 24px;
+}
+.nav .brand { font-weight: 700; color: var(--gold); margin-right: auto; font-size: 18px; }
+.nav a { color: #fff; }
+.nav button { margin-left: 12px; }
+.main { max-width: 1000px; margin: 0 auto; padding: 24px; }
+.card {
+  background: #fff; border: 1px solid var(--border); border-radius: 12px;
+  padding: 24px; width: 360px; display: flex; flex-direction: column; gap: 12px;
+}
+h1 { font-size: 22px; margin: 0 0 16px; }
+h2 { font-size: 16px; margin: 0 0 8px; }
+label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 4px; }
+input, select {
+  width: 100%; padding: 9px 11px; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 14px; background: #fff;
+}
+button {
+  background: var(--navy); color: #fff; border: none; border-radius: 8px;
+  padding: 9px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+button.secondary { background: #fff; color: var(--navy); border: 1px solid var(--navy); }
+button:disabled { opacity: 0.5; cursor: default; }
+table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; }
+th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 14px; vertical-align: middle; }
+th { background: #f7f7f8; font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); }
+.err { color: #b91c1c; font-size: 13px; }
+.thumb { width: 48px; height: 40px; object-fit: cover; border-radius: 6px; background: var(--cream); }
+.row-actions { display: flex; gap: 8px; align-items: center; }
+.pill { padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; background: #fef3c7; color: #92400e; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
